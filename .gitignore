@@ -1,0 +1,17 @@
+__pycache__/
+*.env
+.env
+
+# Go binary
+htreq
+
+# Debian package build artifacts
+htreq_*/
+*.deb
+Packages.gz
+
+# Emacs
+*.elc
+
+# Test server (on feature branch only)
+test-server/
