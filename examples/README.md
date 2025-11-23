@@ -32,7 +32,7 @@ Host: localhost
 
 " | sudo ./htreq --unix-socket /var/run/docker.sock
 
-# List containers  
+# List containers
 echo "GET /containers/json HTTP/1.1
 Host: localhost
 
@@ -190,48 +190,6 @@ Interactive WebSocket connections (public echo service):
 ```bash
 ./htreq --websocket -f examples/websocket-echo.http
 ```
-
-### Local Testing
-
-Use the included test server for local WebSocket testing:
-
-```bash
-# Start test server (in one terminal)
-cd test-server && npm install && npm start
-
-# Connect with htreq (in another terminal) 
-# Echo server
-echo "GET /echo HTTP/1.1
-Host: localhost:8765
-Upgrade: websocket
-Connection: Upgrade
-Sec-WebSocket-Key: x3JJHMbDL1EzLkh9GBhXDw==
-Sec-WebSocket-Version: 13
-
-" | ./htreq --websocket
-
-# Uppercase server
-echo "GET /uppercase HTTP/1.1
-Host: localhost:8765
-Upgrade: websocket
-Connection: Upgrade
-Sec-WebSocket-Key: x3JJHMbDL1EzLkh9GBhXDw==
-Sec-WebSocket-Version: 13
-
-" | ./htreq --websocket
-
-# Chat server  
-echo "GET /chat HTTP/1.1
-Host: localhost:8765
-Upgrade: websocket
-Connection: Upgrade
-Sec-WebSocket-Key: x3JJHMbDL1EzLkh9GBhXDw==
-Sec-WebSocket-Version: 13
-
-" | ./htreq --websocket
-```
-
-See `examples/WEBSOCKET.md` for comprehensive WebSocket documentation.
 
 ## Piping
 
