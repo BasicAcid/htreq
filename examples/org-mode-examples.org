@@ -1,0 +1,327 @@
+#+TITLE: htreq Org-Mode Integration Examples
+#+AUTHOR: htreq
+#+DATE: 2025-11-14
+
+* Setup
+
+First, ensure =ob-htreq.el= is loaded in your Emacs configuration:
+
+#+begin_src emacs-lisp :exports code :eval never
+;; Add to your init.el or .emacs
+(add-to-list 'load-path "/path/to/htreq/")
+(require 'ob-htreq)
+
+;; Enable htreq in org-babel
+(org-babel-do-load-languages
+ 'org-babel-load-languages
+ '((emacs-lisp . t)
+   (shell . t)
+   (htreq . t)))
+
+;; Optional: Set custom htreq binary path
+(setq ob-htreq-binary "/usr/local/bin/htreq")
+#+end_src
+
+* Basic Examples
+
+** Simple GET Request
+
+Execute this block with =C-c C-c=:
+
+#+begin_src htreq
+GET / HTTP/1.1
+Host: httpbin.org
+
+#+end_src
+
+** POST Request with JSON
+
+#+begin_src htreq
+POST /post HTTP/1.1
+Host: httpbin.org
+Content-Type: application/json
+Content-Length: 27
+
+{"name": "test", "value": 42}
+#+end_src
+
+** Custom Headers
+
+#+begin_src htreq
+GET /headers HTTP/1.1
+Host: httpbin.org
+User-Agent: htreq-org-mode/1.0
+X-Custom-Header: my-value
+
+#+end_src
+
+* Using Header Arguments
+
+** Headers Only
+
+Get only the response headers:
+
+#+begin_src htreq :head t
+GET / HTTP/1.1
+Host: httpbin.org
+
+#+end_src
+
+** Body Only
+
+Get only the response body (great for piping to jq):
+
+#+begin_src htreq :body t
+GET /json HTTP/1.1
+Host: httpbin.org
+
+#+end_src
+
+** HTTP/2 Request
+
+#+begin_src htreq :http2 t
+GET / HTTP/1.1
+Host: www.google.com
+
+#+end_src
+
+** HTTP/2 with Frame Inspection
+
+#+begin_src htreq :http2 t :dump-frames t
+GET / HTTP/1.1
+Host: www.google.com
+
+#+end_src
+
+** Limit Response Size
+
+#+begin_src htreq :max-bytes 500
+GET / HTTP/1.1
+Host: httpbin.org
+
+#+end_src
+
+** Force Plain TCP on Port 443
+
+#+begin_src htreq :no-tls t
+GET / HTTP/1.1
+Host: example.com:443
+
+#+end_src
+
+** Explicit Target
+
+Override the Host header target:
+
+#+begin_src htreq :target "postman-echo.com"
+POST /post HTTP/1.1
+Host: httpbin.org
+Content-Type: application/json
+Content-Length: 17
+
+{"test": "value"}
+#+end_src
+
+* Variable Substitution
+
+** Using Variables
+
+Define variables with =:var= and reference them with =$varname= or =${varname}=:
+
+#+begin_src htreq :var host="httpbin.org" endpoint="/get"
+GET $endpoint HTTP/1.1
+Host: ${host}
+
+#+end_src
+
+** API Token Example
+
+#+begin_src htreq :var token="my-secret-token" :body t
+GET /bearer HTTP/1.1
+Host: httpbin.org
+Authorization: Bearer $token
+
+#+end_src
+
+** Multiple Variables
+
+#+begin_src htreq :var api="api.github.com" user="octocat" token="ghp_xxxx"
+GET /users/${user}/repos HTTP/1.1
+Host: $api
+Authorization: token $token
+Accept: application/vnd.github.v3+json
+
+#+end_src
+
+* Environment Variables
+
+** Using .env File
+
+#+begin_src htreq :env-file ".env"
+GET /bearer HTTP/1.1
+Host: httpbin.org
+Authorization: Bearer $API_TOKEN
+
+#+end_src
+
+* Advanced Examples
+
+** Quiet Mode (Suppress stderr)
+
+#+begin_src htreq :quiet t :body t
+GET /json HTTP/1.1
+Host: httpbin.org
+
+#+end_src
+
+** Custom Timeout
+
+#+begin_src htreq :timeout 30
+GET /delay/5 HTTP/1.1
+Host: httpbin.org
+
+#+end_src
+
+** TLS Certificate Inspection
+
+#+begin_src htreq :dump-tls t
+GET / HTTP/1.1
+Host: github.com
+
+#+end_src
+
+** Disable Certificate Verification
+
+Useful for self-signed certificates:
+
+#+begin_src htreq :no-verify t
+GET / HTTP/1.1
+Host: self-signed.badssl.com
+
+#+end_src
+
+* Workflow Examples
+
+** Testing API Endpoints
+
+#+begin_src htreq :var base="api.example.com" :body t
+GET /api/v1/users HTTP/1.1
+Host: $base
+Accept: application/json
+
+#+end_src
+
+** Chaining Requests with org-mode
+
+First, get a token:
+
+#+name: get-token
+#+begin_src htreq :body t :quiet t
+POST /post HTTP/1.1
+Host: httpbin.org
+Content-Type: application/json
+Content-Length: 34
+
+{"username": "user", "pass": "pw"}
+#+end_src
+
+Then extract and use it (requires additional elisp processing):
+
+#+begin_src emacs-lisp :var response=get-token
+;; Parse JSON response to extract token
+;; This is just an example - you'd need json.el or similar
+(message "Response: %s" response)
+#+end_src
+
+** Documentation Testing
+
+Use org-mode's tangling to generate .http files:
+
+#+begin_src htreq :tangle example-request.http :eval never
+GET /status/200 HTTP/1.1
+Host: httpbin.org
+
+#+end_src
+
+* Tips and Tricks
+
+** Keybindings
+
+You can add a convenient keybinding to execute htreq blocks:
+
+#+begin_src emacs-lisp :exports code :eval never
+(defun my/htreq-execute-block ()
+  "Execute current htreq block at point."
+  (interactive)
+  (when (eq major-mode 'org-mode)
+    (org-babel-execute-src-block)))
+
+(define-key org-mode-map (kbd "C-c h") 'my/htreq-execute-block)
+#+end_src
+
+** Results Formatting
+
+You can control how results are displayed:
+
+- =:results output= (default) - Show all output
+- =:results value= - Show return value
+- =:results silent= - Don't show results
+- =:results replace= - Replace previous results
+- =:results append= - Append to previous results
+
+Example:
+
+#+begin_src htreq :results output replace :body t
+GET /uuid HTTP/1.1
+Host: httpbin.org
+
+#+end_src
+
+** Exporting
+
+When exporting org files to HTML/PDF, you can control code block behavior:
+
+- =:exports code= - Export only the code
+- =:exports results= - Export only the results  
+- =:exports both= (default) - Export both code and results
+- =:exports none= - Don't export
+
+#+begin_src htreq :exports both :body t
+GET /json HTTP/1.1
+Host: httpbin.org
+
+#+end_src
+
+* Troubleshooting
+
+** htreq not found
+
+If you get "htreq: command not found", either:
+
+1. Add htreq to your PATH
+2. Set the full path in your config:
+
+#+begin_src emacs-lisp :exports code :eval never
+(setq ob-htreq-binary "/full/path/to/htreq")
+#+end_src
+
+** Syntax Highlighting
+
+For syntax highlighting in htreq blocks, ensure you have http-mode installed,
+or the htreq major mode will be used automatically.
+
+** Variable Substitution Not Working
+
+Make sure you're using the =:var= header argument:
+
+#+begin_src htreq :var myvar="value"
+GET /get?test=$myvar HTTP/1.1
+Host: httpbin.org
+
+#+end_src
+
+* See Also
+
+- [[file:../README.md][htreq README]]
+- [[file:README.md][HTTP Examples]]
+- [[https://orgmode.org/manual/Working-with-Source-Code.html][Org-mode Babel Documentation]]

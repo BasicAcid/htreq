@@ -1,0 +1,7 @@
+GET / HTTP/1.1
+Host: echo.websocket.events
+Upgrade: websocket
+Connection: Upgrade
+Sec-WebSocket-Key: x3JJHMbDL1EzLkh9GBhXDw==
+Sec-WebSocket-Version: 13
+

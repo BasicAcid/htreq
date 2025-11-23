@@ -1,0 +1,7 @@
+GET /headers HTTP/1.1
+Host: postman-echo.com
+X-Custom-Header: MyValue
+Authorization: Bearer example-token-123
+User-Agent: htreq/1.0
+Connection: close
+
