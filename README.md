@@ -21,24 +21,21 @@ htreq is a command-line tool for testing HTTP APIs with complete control over th
 
 ## Installation
 
-### Pre-built binaries
+### Debian/Ubuntu Package
 
-Download the latest release for your platform from the [releases page](https://github.com/BasicAcid/htreq/releases/latest):
+Download the `.deb` package from the [releases page](https://github.com/BasicAcid/htreq/releases/latest):
 
-- **Linux (amd64)**: `htreq-linux-amd64.tar.gz`
-- **Linux (arm64)**: `htreq-linux-arm64.tar.gz`
-- **macOS (Intel)**: `htreq-darwin-amd64.tar.gz`
-- **macOS (Apple Silicon)**: `htreq-darwin-arm64.tar.gz`
-- **Windows (amd64)**: `htreq-windows-amd64.zip`
-
-**Debian/Ubuntu (.deb package):**
 ```bash
-# Download the appropriate .deb for your architecture
+# For amd64 (x86_64)
 wget https://github.com/BasicAcid/htreq/releases/latest/download/htreq_VERSION_amd64.deb
 sudo dpkg -i htreq_VERSION_amd64.deb
+
+# For arm64
+wget https://github.com/BasicAcid/htreq/releases/latest/download/htreq_VERSION_arm64.deb
+sudo dpkg -i htreq_VERSION_arm64.deb
 ```
 
-### From source
+### From Source
 
 **Requirements:** Go 1.24+
 

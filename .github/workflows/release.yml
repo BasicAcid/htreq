@@ -28,7 +28,7 @@ jobs:
       id: get_version
       run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
     
-    - name: Build binaries for multiple platforms
+    - name: Build Linux binaries
       run: |
         # Linux amd64
         GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o htreq-linux-amd64 .
@@ -36,26 +36,7 @@ jobs:
         # Linux arm64
         GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o htreq-linux-arm64 .
         
-        # macOS amd64 (Intel)
-        GOOS=darwin GOARCH=amd64 go build -ldflags="-s -w" -o htreq-darwin-amd64 .
-        
-        # macOS arm64 (Apple Silicon)
-        GOOS=darwin GOARCH=arm64 go build -ldflags="-s -w" -o htreq-darwin-arm64 .
-        
-        # Windows amd64
-        GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o htreq-windows-amd64.exe .
-        
-        # Make Linux binaries executable
         chmod +x htreq-linux-*
-        chmod +x htreq-darwin-*
-    
-    - name: Create tar archives
-      run: |
-        tar -czf htreq-linux-amd64.tar.gz htreq-linux-amd64
-        tar -czf htreq-linux-arm64.tar.gz htreq-linux-arm64
-        tar -czf htreq-darwin-amd64.tar.gz htreq-darwin-amd64
-        tar -czf htreq-darwin-arm64.tar.gz htreq-darwin-arm64
-        zip htreq-windows-amd64.zip htreq-windows-amd64.exe
     
     - name: Build .deb package
       run: |
@@ -122,18 +103,13 @@ jobs:
     
     - name: Generate checksums
       run: |
-        sha256sum htreq-*.tar.gz htreq-*.zip htreq_*.deb > checksums.txt
+        sha256sum htreq_*.deb > checksums.txt
         cat checksums.txt
     
     - name: Create Release
       uses: softprops/action-gh-release@v1
       with:
         files: |
-          htreq-linux-amd64.tar.gz
-          htreq-linux-arm64.tar.gz
-          htreq-darwin-amd64.tar.gz
-          htreq-darwin-arm64.tar.gz
-          htreq-windows-amd64.zip
           htreq_*_amd64.deb
           htreq_*_arm64.deb
           checksums.txt
