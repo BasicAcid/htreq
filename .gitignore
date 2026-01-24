@@ -10,6 +10,10 @@ htreq_*/
 *.deb
 Packages.gz
 
+# Test coverage
+coverage.out
+*.test
+
 # Emacs
 *.elc
 

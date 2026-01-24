@@ -18,7 +18,11 @@ clean:
 	rm -f $(BINARY)
 
 test:
-	@echo "Testing basic functionality..."
-	@./compare_versions.sh
+	@echo "Running unit tests..."
+	@go test -v -cover
+	@if [ -f ./compare_versions.sh ]; then \
+		echo "Testing basic functionality..."; \
+		./compare_versions.sh; \
+	fi
 
 .DEFAULT_GOAL := build
