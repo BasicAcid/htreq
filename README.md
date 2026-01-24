@@ -1,5 +1,9 @@
 # htreq
 
+[![Build Status](https://github.com/BasicAcid/htreq/workflows/Build%20and%20Test/badge.svg)](https://github.com/BasicAcid/htreq/actions)
+[![Release](https://img.shields.io/github/v/release/BasicAcid/htreq)](https://github.com/BasicAcid/htreq/releases/latest)
+[![License](https://img.shields.io/github/license/BasicAcid/htreq)](LICENSE)
+
 Send raw HTTP requests over TCP or TLS.
 
 htreq is a command-line tool for testing HTTP APIs with complete control over the request. What you write is exactly what gets sent over the wire - no abstraction, no magic.
@@ -17,15 +21,33 @@ htreq is a command-line tool for testing HTTP APIs with complete control over th
 
 ## Installation
 
-**From source:**
+### Pre-built binaries
+
+Download the latest release for your platform from the [releases page](https://github.com/BasicAcid/htreq/releases/latest):
+
+- **Linux (amd64)**: `htreq-linux-amd64.tar.gz`
+- **Linux (arm64)**: `htreq-linux-arm64.tar.gz`
+- **macOS (Intel)**: `htreq-darwin-amd64.tar.gz`
+- **macOS (Apple Silicon)**: `htreq-darwin-arm64.tar.gz`
+- **Windows (amd64)**: `htreq-windows-amd64.zip`
+
+**Debian/Ubuntu (.deb package):**
 ```bash
-git clone https://github.com/dtabarie/htreq
+# Download the appropriate .deb for your architecture
+wget https://github.com/BasicAcid/htreq/releases/latest/download/htreq_VERSION_amd64.deb
+sudo dpkg -i htreq_VERSION_amd64.deb
+```
+
+### From source
+
+**Requirements:** Go 1.24+
+
+```bash
+git clone https://github.com/BasicAcid/htreq
 cd htreq
 make
 sudo make install  # installs to /usr/local/bin
 ```
-
-**Requirements:** Go 1.24+
 
 ## Usage
 
