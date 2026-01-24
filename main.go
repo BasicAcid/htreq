@@ -472,6 +472,7 @@ func loadEnvFile(path string) error {
 		return fmt.Errorf("environment file not found: %s", path)
 	}
 	defer func() {
+		// Close file, error is not actionable here
 		_ = file.Close()
 	}()
 
@@ -1286,9 +1287,7 @@ func runWebSocket(conn net.Conn, request string, cfg *config) error {
 	if err != nil {
 		return fmt.Errorf("WebSocket dial failed: %w", err)
 	}
-	defer func() {
-		_ = wsConn.Close()
-	}()
+	// Note: connection is closed in handleWebSocketSession
 
 	if !cfg.quiet {
 		elapsed := time.Since(startTime)
@@ -1305,6 +1304,7 @@ func runWebSocket(conn net.Conn, request string, cfg *config) error {
 
 func handleWebSocketSession(conn *websocket.Conn, cfg *config) error {
 	defer func() {
+		// Close connection, ignore error as we're already shutting down
 		_ = conn.Close()
 	}()
 
