@@ -436,6 +436,113 @@ func TestMin(t *testing.T) {
 	}
 }
 
+// Test validateConfig function
+func TestValidateConfig(t *testing.T) {
+	tests := []struct {
+		name    string
+		cfg     *config
+		wantErr bool
+		errMsg  string
+	}{
+		{
+			name:    "valid config",
+			cfg:     &config{},
+			wantErr: false,
+		},
+		{
+			name: "headersOnly and bodyOnly conflict",
+			cfg: &config{
+				headersOnly: true,
+				bodyOnly:    true,
+			},
+			wantErr: true,
+			errMsg:  "cannot use --head and --body together",
+		},
+		{
+			name: "useTLS and noTLS conflict",
+			cfg: &config{
+				useTLS: true,
+				noTLS:  true,
+			},
+			wantErr: true,
+			errMsg:  "cannot use --tls and --no-tls together",
+		},
+		{
+			name: "unix socket with TLS",
+			cfg: &config{
+				unixSocket: "/var/run/docker.sock",
+				useTLS:     true,
+			},
+			wantErr: true,
+			errMsg:  "cannot use --tls with --unix-socket",
+		},
+		{
+			name: "unix socket with HTTP/2",
+			cfg: &config{
+				unixSocket: "/var/run/docker.sock",
+				useHTTP2:   true,
+			},
+			wantErr: true,
+			errMsg:  "--http2 cannot be used with --unix-socket",
+		},
+		{
+			name: "unix socket with WebSocket",
+			cfg: &config{
+				unixSocket:   "/var/run/docker.sock",
+				useWebSocket: true,
+			},
+			wantErr: true,
+			errMsg:  "--websocket cannot be used with --unix-socket",
+		},
+		{
+			name: "dump-frames without HTTP/2",
+			cfg: &config{
+				dumpFrames: true,
+				useHTTP2:   false,
+			},
+			wantErr: true,
+			errMsg:  "--dump-frames requires --http2",
+		},
+		{
+			name: "WebSocket and HTTP/2 conflict",
+			cfg: &config{
+				useWebSocket: true,
+				useHTTP2:     true,
+			},
+			wantErr: true,
+			errMsg:  "cannot use --websocket and --http2 together",
+		},
+		{
+			name: "valid HTTP/2 config",
+			cfg: &config{
+				useHTTP2:   true,
+				dumpFrames: true,
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid WebSocket config",
+			cfg: &config{
+				useWebSocket: true,
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateConfig(tt.cfg)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("validateConfig() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if tt.wantErr && err.Error() != tt.errMsg {
+				t.Errorf("validateConfig() error message = %v, want %v", err.Error(), tt.errMsg)
+			}
+		})
+	}
+}
+
 // Helper function to create int64 pointer
 func int64Ptr(i int64) *int64 {
 	return &i

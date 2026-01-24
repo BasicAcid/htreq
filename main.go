@@ -24,6 +24,9 @@ import (
 	"golang.org/x/term"
 )
 
+// Buffer size for reading network data
+const defaultBufferSize = 4096
+
 // ANSI color codes
 const (
 	colorReset   = "\033[0m"
@@ -209,42 +212,53 @@ func parseArgs() *config {
 	return cfg
 }
 
-func run(cfg *config) error {
-	// Validate arguments
+func validateConfig(cfg *config) error {
+	// Validate mutually exclusive output options
 	if cfg.headersOnly && cfg.bodyOnly {
 		return fmt.Errorf("cannot use --head and --body together")
 	}
 
+	// Validate TLS flag conflicts
 	if cfg.useTLS && cfg.noTLS {
 		return fmt.Errorf("cannot use --tls and --no-tls together")
 	}
 
-	if cfg.unixSocket != "" && cfg.useTLS {
-		return fmt.Errorf("cannot use --tls with --unix-socket")
+	// Validate Unix socket incompatibilities
+	if cfg.unixSocket != "" {
+		if cfg.useTLS {
+			return fmt.Errorf("cannot use --tls with --unix-socket")
+		}
+		if cfg.noTLS {
+			return fmt.Errorf("cannot use --no-tls with --unix-socket")
+		}
+		if cfg.dumpTLS {
+			return fmt.Errorf("cannot use --dump-tls with --unix-socket")
+		}
+		if cfg.useHTTP2 {
+			return fmt.Errorf("--http2 cannot be used with --unix-socket")
+		}
+		if cfg.useWebSocket {
+			return fmt.Errorf("--websocket cannot be used with --unix-socket")
+		}
 	}
 
-	if cfg.unixSocket != "" && cfg.noTLS {
-		return fmt.Errorf("cannot use --no-tls with --unix-socket")
-	}
-
-	if cfg.unixSocket != "" && cfg.dumpTLS {
-		return fmt.Errorf("cannot use --dump-tls with --unix-socket")
-	}
-
+	// Validate HTTP/2 requirements
 	if cfg.dumpFrames && !cfg.useHTTP2 {
 		return fmt.Errorf("--dump-frames requires --http2")
 	}
 
-	if cfg.useHTTP2 && cfg.unixSocket != "" {
-		return fmt.Errorf("--http2 cannot be used with --unix-socket")
-	}
-
+	// Validate protocol conflicts
 	if cfg.useWebSocket && cfg.useHTTP2 {
 		return fmt.Errorf("cannot use --websocket and --http2 together")
 	}
 
-	if cfg.useWebSocket && cfg.unixSocket != "" {
-		return fmt.Errorf("--websocket cannot be used with --unix-socket")
+	return nil
+}
+
+func run(cfg *config) error {
+	// Validate configuration
+	if err := validateConfig(cfg); err != nil {
+		return err
 	}
 
 	// Load environment file if specified
@@ -589,7 +603,7 @@ func readResponse(conn net.Conn, cfg *config) error {
 
 	// Read until we find the end of headers
 	for !headerEnded {
-		chunk := make([]byte, 4096)
+		chunk := make([]byte, defaultBufferSize)
 		n, err := reader.Read(chunk)
 		if n > 0 {
 			buffer.Write(chunk[:n])
@@ -677,7 +691,7 @@ func readChunkedBody(reader *bufio.Reader, buffer *bytes.Buffer, output io.Write
 	for {
 		// Ensure we have enough data for chunk size line
 		for !bytes.Contains(buffer.Bytes(), []byte("\r\n")) {
-			chunk := make([]byte, 4096)
+			chunk := make([]byte, defaultBufferSize)
 			n, err := reader.Read(chunk)
 			if n > 0 {
 				buffer.Write(chunk[:n])
@@ -712,7 +726,7 @@ func readChunkedBody(reader *bufio.Reader, buffer *bytes.Buffer, output io.Write
 		// Read chunk data + trailing CRLF
 		needed := chunkSize + 2
 		for int64(buffer.Len()) < needed {
-			chunk := make([]byte, 4096)
+			chunk := make([]byte, defaultBufferSize)
 			n, err := reader.Read(chunk)
 			if n > 0 {
 				buffer.Write(chunk[:n])
@@ -772,7 +786,7 @@ func readRegularBody(reader *bufio.Reader, buffer *bytes.Buffer, output io.Write
 	// Read rest of body
 	for (cfg.maxBytes == 0 || *bytesWritten < cfg.maxBytes) && (contentLength == nil || bodyReceived < *contentLength) {
 
-		chunk := make([]byte, 4096)
+		chunk := make([]byte, defaultBufferSize)
 		n, err := reader.Read(chunk)
 		if n > 0 {
 			if !cfg.headersOnly {
