@@ -1348,8 +1348,11 @@ func handleWebSocketSession(conn *websocket.Conn, cfg *config) error {
 				fmt.Fprintf(os.Stderr, "[*] Sent message: %s\n", text)
 			}
 		}
+		// Always signal completion, even on normal EOF
 		if err := scanner.Err(); err != nil {
 			done <- fmt.Errorf("stdin read error: %w", err)
+		} else {
+			done <- nil // EOF on stdin (e.g., Ctrl+D)
 		}
 	}()
 
