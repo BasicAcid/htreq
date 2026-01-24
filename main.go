@@ -772,6 +772,10 @@ func readChunkedBody(reader *bufio.Reader, buffer *bytes.Buffer, output io.Write
 }
 
 func readRegularBody(reader *bufio.Reader, buffer *bytes.Buffer, output io.Writer, cfg *config, contentLength *int64, bytesWritten *int64) error {
+	// Track body bytes separately for Content-Length validation
+	// bytesWritten may include headers if bodyOnly=false
+	var bodyReceived int64
+
 	// Write initial buffer if not headers-only
 	if !cfg.headersOnly && buffer.Len() > 0 {
 		data := buffer.Bytes()
@@ -783,12 +787,8 @@ func readRegularBody(reader *bufio.Reader, buffer *bytes.Buffer, output io.Write
 			return err
 		}
 		*bytesWritten += int64(len(toWrite))
+		bodyReceived += int64(len(toWrite))
 		buffer.Reset()
-	}
-
-	bodyReceived := *bytesWritten
-	if cfg.bodyOnly {
-		bodyReceived = *bytesWritten
 	}
 
 	// Read rest of body
