@@ -1,0 +1,144 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: Build and Release
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.24'
+    
+    - name: Get version from tag
+      id: get_version
+      run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+    
+    - name: Build binaries for multiple platforms
+      run: |
+        # Linux amd64
+        GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o htreq-linux-amd64 .
+        
+        # Linux arm64
+        GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o htreq-linux-arm64 .
+        
+        # macOS amd64 (Intel)
+        GOOS=darwin GOARCH=amd64 go build -ldflags="-s -w" -o htreq-darwin-amd64 .
+        
+        # macOS arm64 (Apple Silicon)
+        GOOS=darwin GOARCH=arm64 go build -ldflags="-s -w" -o htreq-darwin-arm64 .
+        
+        # Windows amd64
+        GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o htreq-windows-amd64.exe .
+        
+        # Make Linux binaries executable
+        chmod +x htreq-linux-*
+        chmod +x htreq-darwin-*
+    
+    - name: Create tar archives
+      run: |
+        tar -czf htreq-linux-amd64.tar.gz htreq-linux-amd64
+        tar -czf htreq-linux-arm64.tar.gz htreq-linux-arm64
+        tar -czf htreq-darwin-amd64.tar.gz htreq-darwin-amd64
+        tar -czf htreq-darwin-arm64.tar.gz htreq-darwin-arm64
+        zip htreq-windows-amd64.zip htreq-windows-amd64.exe
+    
+    - name: Build .deb package
+      run: |
+        VERSION=${{ steps.get_version.outputs.VERSION }}
+        ARCH=amd64
+        PKG_DIR=htreq_${VERSION}_${ARCH}
+        
+        # Create package directory structure
+        mkdir -p ${PKG_DIR}/usr/local/bin
+        mkdir -p ${PKG_DIR}/usr/share/doc/htreq
+        mkdir -p ${PKG_DIR}/DEBIAN
+        
+        # Copy binary
+        cp htreq-linux-amd64 ${PKG_DIR}/usr/local/bin/htreq
+        chmod 755 ${PKG_DIR}/usr/local/bin/htreq
+        
+        # Copy documentation
+        cp README.md ${PKG_DIR}/usr/share/doc/htreq/
+        cp LICENSE ${PKG_DIR}/usr/share/doc/htreq/
+        
+        # Create control file
+        cat > ${PKG_DIR}/DEBIAN/control << EOF
+        Package: htreq
+        Version: ${VERSION}
+        Section: net
+        Priority: optional
+        Architecture: ${ARCH}
+        Maintainer: htreq developers
+        Description: Command-line tool for sending raw HTTP requests
+         htreq is a command-line tool for sending raw HTTP requests over TCP or TLS.
+         It supports HTTP/1.1, HTTP/2, WebSocket protocol, and Unix socket connections.
+        EOF
+        
+        # Build the package
+        dpkg-deb --build ${PKG_DIR}
+        
+        # Build arm64 .deb package
+        ARCH=arm64
+        PKG_DIR=htreq_${VERSION}_${ARCH}
+        
+        mkdir -p ${PKG_DIR}/usr/local/bin
+        mkdir -p ${PKG_DIR}/usr/share/doc/htreq
+        mkdir -p ${PKG_DIR}/DEBIAN
+        
+        cp htreq-linux-arm64 ${PKG_DIR}/usr/local/bin/htreq
+        chmod 755 ${PKG_DIR}/usr/local/bin/htreq
+        
+        cp README.md ${PKG_DIR}/usr/share/doc/htreq/
+        cp LICENSE ${PKG_DIR}/usr/share/doc/htreq/
+        
+        cat > ${PKG_DIR}/DEBIAN/control << EOF
+        Package: htreq
+        Version: ${VERSION}
+        Section: net
+        Priority: optional
+        Architecture: ${ARCH}
+        Maintainer: htreq developers
+        Description: Command-line tool for sending raw HTTP requests
+         htreq is a command-line tool for sending raw HTTP requests over TCP or TLS.
+         It supports HTTP/1.1, HTTP/2, WebSocket protocol, and Unix socket connections.
+        EOF
+        
+        dpkg-deb --build ${PKG_DIR}
+    
+    - name: Generate checksums
+      run: |
+        sha256sum htreq-*.tar.gz htreq-*.zip htreq_*.deb > checksums.txt
+        cat checksums.txt
+    
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          htreq-linux-amd64.tar.gz
+          htreq-linux-arm64.tar.gz
+          htreq-darwin-amd64.tar.gz
+          htreq-darwin-arm64.tar.gz
+          htreq-windows-amd64.zip
+          htreq_*_amd64.deb
+          htreq_*_arm64.deb
+          checksums.txt
+        draft: false
+        prerelease: false
+        generate_release_notes: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
