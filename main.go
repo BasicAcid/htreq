@@ -336,12 +336,20 @@ func run(cfg *config) error {
 
 	// Handle TLS dump
 	if cfg.dumpTLS {
-		return dumpTLSInfo(conn.(*tls.Conn), cfg.target)
+		tlsConn, ok := conn.(*tls.Conn)
+		if !ok {
+			return fmt.Errorf("internal error: expected TLS connection but got %T", conn)
+		}
+		return dumpTLSInfo(tlsConn, cfg.target)
 	}
 
 	// Use HTTP/2 if requested
 	if cfg.useHTTP2 {
-		return runHTTP2(conn.(*tls.Conn), request, cfg)
+		tlsConn, ok := conn.(*tls.Conn)
+		if !ok {
+			return fmt.Errorf("internal error: expected TLS connection but got %T", conn)
+		}
+		return runHTTP2(tlsConn, request, cfg)
 	}
 
 	// HTTP/1.1 mode
