@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"crypto/tls"
 	"encoding/hex"
@@ -1307,52 +1308,78 @@ func handleWebSocketSession(conn *websocket.Conn, cfg *config) error {
 		_ = conn.Close()
 	}()
 
+	// Create context for goroutine coordination
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel() // Ensure all goroutines are stopped
+
 	// Channel to signal completion
 	done := make(chan error, 1)
 
 	// Start reading messages from WebSocket
 	go func() {
+		defer cancel() // Cancel context when this goroutine exits
 		for {
-			messageType, message, err := conn.ReadMessage()
-			if err != nil {
-				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseNormalClosure) {
-					done <- fmt.Errorf("WebSocket read error: %w", err)
-				} else {
-					done <- nil // Normal closure
-				}
+			select {
+			case <-ctx.Done():
 				return
-			}
-
-			// Print received message
-			if !cfg.quiet {
-				typeStr := "TEXT"
-				if messageType == websocket.BinaryMessage {
-					typeStr = "BINARY"
+			default:
+				// Set read deadline to allow periodic context checks
+				conn.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+				messageType, message, err := conn.ReadMessage()
+				if err != nil {
+					// Check if it's a timeout (expected for context checking)
+					if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+						continue // Continue loop to check context
+					}
+					// Real error or connection closed
+					if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseNormalClosure) {
+						done <- fmt.Errorf("WebSocket read error: %w", err)
+					} else {
+						done <- nil // Normal closure
+					}
+					return
 				}
-				fmt.Fprintf(os.Stderr, "\n[*] Received %s message (%d bytes)\n", typeStr, len(message))
+
+				// Print received message
+				if !cfg.quiet {
+					typeStr := "TEXT"
+					if messageType == websocket.BinaryMessage {
+						typeStr = "BINARY"
+					}
+					fmt.Fprintf(os.Stderr, "\n[*] Received %s message (%d bytes)\n", typeStr, len(message))
+				}
+				fmt.Printf("%s\n", message)
 			}
-			fmt.Printf("%s\n", message)
 		}
 	}()
 
 	// Read from stdin and send messages
 	go func() {
+		defer cancel() // Cancel context when this goroutine exits
 		scanner := bufio.NewScanner(os.Stdin)
-		for scanner.Scan() {
-			text := scanner.Text()
-			if err := conn.WriteMessage(websocket.TextMessage, []byte(text)); err != nil {
-				done <- fmt.Errorf("WebSocket write error: %w", err)
+		for {
+			select {
+			case <-ctx.Done():
 				return
+			default:
+				if !scanner.Scan() {
+					// Scanner finished (EOF or error)
+					if err := scanner.Err(); err != nil {
+						done <- fmt.Errorf("stdin read error: %w", err)
+					} else {
+						done <- nil // EOF on stdin (e.g., Ctrl+D)
+					}
+					return
+				}
+				text := scanner.Text()
+				if err := conn.WriteMessage(websocket.TextMessage, []byte(text)); err != nil {
+					done <- fmt.Errorf("WebSocket write error: %w", err)
+					return
+				}
+				if !cfg.quiet {
+					fmt.Fprintf(os.Stderr, "[*] Sent message: %s\n", text)
+				}
 			}
-			if !cfg.quiet {
-				fmt.Fprintf(os.Stderr, "[*] Sent message: %s\n", text)
-			}
-		}
-		// Always signal completion, even on normal EOF
-		if err := scanner.Err(); err != nil {
-			done <- fmt.Errorf("stdin read error: %w", err)
-		} else {
-			done <- nil // EOF on stdin (e.g., Ctrl+D)
 		}
 	}()
 
