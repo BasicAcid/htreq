@@ -730,7 +730,7 @@ func readChunkedBody(reader *bufio.Reader, buffer *bytes.Buffer, output io.Write
 
 		chunkSize, err := strconv.ParseInt(sizeStr, 16, 64)
 		if err != nil {
-			return fmt.Errorf("invalid chunk size: %s", sizeStr)
+			return fmt.Errorf("invalid chunk size %q: expected hexadecimal number, parse error: %w", sizeStr, err)
 		}
 
 		// Last chunk
@@ -972,7 +972,7 @@ func parseHTTPRequest(request string) (method, path string, headers map[string]s
 	// Parse request line
 	parts := strings.Fields(lines[0])
 	if len(parts) < 2 {
-		return "", "", nil, "", fmt.Errorf("invalid request line: %s", lines[0])
+		return "", "", nil, "", fmt.Errorf("invalid request line %q: expected format 'METHOD PATH HTTP/VERSION', got %d parts", lines[0], len(parts))
 	}
 	method = parts[0]
 	path = parts[1]
@@ -1005,7 +1005,7 @@ func extractHostFromRequest(request string) (string, error) {
 	// Parse the request to get headers
 	lines := strings.Split(request, "\r\n")
 	if len(lines) == 0 {
-		return "", fmt.Errorf("empty request")
+		return "", fmt.Errorf("empty request: no lines found")
 	}
 
 	// Look for Host header
@@ -1022,13 +1022,13 @@ func extractHostFromRequest(request string) (string, error) {
 		if strings.ToLower(key) == "host" {
 			value := strings.TrimSpace(line[colonIdx+1:])
 			if value == "" {
-				return "", fmt.Errorf("host header is empty")
+				return "", fmt.Errorf("Host header is present but empty (add a value like 'Host: example.com')")
 			}
 			return value, nil
 		}
 	}
 
-	return "", fmt.Errorf("host header not found in request")
+	return "", fmt.Errorf("Host header not found in request (add 'Host: example.com' header or specify target on command line)")
 }
 
 func encodeHeaders(method, path string, headers map[string]string, cfg *config) []byte {
@@ -1215,13 +1215,13 @@ func runWebSocket(request string, cfg *config) error {
 	// Extract the URL from the request for gorilla/websocket
 	lines := strings.Split(request, "\r\n")
 	if len(lines) == 0 {
-		return fmt.Errorf("empty request")
+		return fmt.Errorf("empty request: no lines found in request data")
 	}
 
 	// Parse request line to get path
 	parts := strings.Fields(lines[0])
 	if len(parts) < 2 {
-		return fmt.Errorf("invalid request line")
+		return fmt.Errorf("invalid request line %q: expected format 'METHOD PATH HTTP/VERSION'", lines[0])
 	}
 	path := parts[1]
 
