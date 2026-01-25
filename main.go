@@ -321,7 +321,7 @@ func run(cfg *config) error {
 
 	// Use WebSocket if requested (handles its own connection)
 	if cfg.useWebSocket {
-		return runWebSocket(nil, request, cfg)
+		return runWebSocket(request, cfg)
 	}
 
 	// Connect (for HTTP/1.1, HTTP/2, and TLS dump)
@@ -610,6 +610,11 @@ func readResponse(conn net.Conn, cfg *config) error {
 	var contentLength *int64
 	chunked := false
 	var bytesWritten int64
+
+	// Set read deadline for the entire response
+	if err := conn.SetReadDeadline(time.Now().Add(cfg.timeout)); err != nil {
+		return fmt.Errorf("failed to set read deadline: %w", err)
+	}
 
 	// Read until we find the end of headers
 	for !headerEnded {
@@ -1206,7 +1211,7 @@ func min(a, b int) int {
 
 // WebSocket implementation
 
-func runWebSocket(conn net.Conn, request string, cfg *config) error {
+func runWebSocket(request string, cfg *config) error {
 	// Extract the URL from the request for gorilla/websocket
 	lines := strings.Split(request, "\r\n")
 	if len(lines) == 0 {
