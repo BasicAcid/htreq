@@ -270,7 +270,58 @@ func run(cfg *config) error {
 		cfg.env = true
 	}
 
-	// Read request first (we may need Host header for target)
+	// Smart TLS inference (unless explicitly set)
+	if cfg.unixSocket == "" && !cfg.useTLS && !cfg.noTLS {
+		port := extractPort(cfg.target)
+		// Default to TLS for port 443 or when no port is specified (will default to 443)
+		if port == "443" || port == "" {
+			cfg.useTLS = true
+			if !cfg.quiet && port == "443" {
+				fmt.Fprintf(os.Stderr, "[*] Auto-enabling TLS for port 443\n")
+			}
+		}
+	}
+
+	// Validate TLS-dependent flags after inference
+	// For dump-tls, force enable TLS if not already set
+	if cfg.dumpTLS {
+		if !cfg.useTLS && !cfg.noTLS {
+			cfg.useTLS = true
+		}
+		if !cfg.useTLS {
+			return fmt.Errorf("--dump-tls requires TLS (port 443 or --tls)")
+		}
+	}
+
+	if cfg.useHTTP2 && !cfg.useTLS {
+		return fmt.Errorf("--http2 requires TLS (port 443 or --tls)")
+	}
+
+	// Apply --no-tls override
+	if cfg.noTLS {
+		cfg.useTLS = false
+	}
+
+	// For TLS dump, we don't need a request - just connect and dump
+	if cfg.dumpTLS {
+		conn, err := connect(cfg)
+		if err != nil {
+			return err
+		}
+		defer func() {
+			if err := conn.Close(); err != nil && !cfg.quiet {
+				fmt.Fprintf(os.Stderr, "[!] Warning: failed to close connection: %v\n", err)
+			}
+		}()
+
+		tlsConn, ok := conn.(*tls.Conn)
+		if !ok {
+			return fmt.Errorf("internal error: expected TLS connection but got %T", conn)
+		}
+		return dumpTLSInfo(tlsConn, cfg.target)
+	}
+
+	// Read request (needed for HTTP/1.1, HTTP/2, and WebSocket)
 	request, err := readRequest(cfg)
 	if err != nil {
 		return err
@@ -293,38 +344,12 @@ func run(cfg *config) error {
 		return fmt.Errorf("target is required unless --unix-socket is used")
 	}
 
-	// Smart TLS inference (unless explicitly set)
-	if cfg.unixSocket == "" && !cfg.useTLS && !cfg.noTLS {
-		port := extractPort(cfg.target)
-		// Default to TLS for port 443 or when no port is specified (will default to 443)
-		if port == "443" || port == "" {
-			cfg.useTLS = true
-			if !cfg.quiet && port == "443" {
-				fmt.Fprintf(os.Stderr, "[*] Auto-enabling TLS for port 443\n")
-			}
-		}
-	}
-
-	// Validate TLS-dependent flags after inference
-	if cfg.dumpTLS && !cfg.useTLS {
-		return fmt.Errorf("--dump-tls requires TLS (port 443 or --tls)")
-	}
-
-	if cfg.useHTTP2 && !cfg.useTLS {
-		return fmt.Errorf("--http2 requires TLS (port 443 or --tls)")
-	}
-
-	// Apply --no-tls override
-	if cfg.noTLS {
-		cfg.useTLS = false
-	}
-
 	// Use WebSocket if requested (handles its own connection)
 	if cfg.useWebSocket {
 		return runWebSocket(request, cfg)
 	}
 
-	// Connect (for HTTP/1.1, HTTP/2, and TLS dump)
+	// Connect (for HTTP/1.1 and HTTP/2)
 	conn, err := connect(cfg)
 	if err != nil {
 		return err
@@ -334,15 +359,6 @@ func run(cfg *config) error {
 			fmt.Fprintf(os.Stderr, "[!] Warning: failed to close connection: %v\n", err)
 		}
 	}()
-
-	// Handle TLS dump
-	if cfg.dumpTLS {
-		tlsConn, ok := conn.(*tls.Conn)
-		if !ok {
-			return fmt.Errorf("internal error: expected TLS connection but got %T", conn)
-		}
-		return dumpTLSInfo(tlsConn, cfg.target)
-	}
 
 	// Use HTTP/2 if requested
 	if cfg.useHTTP2 {
