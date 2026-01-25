@@ -1,0 +1,7 @@
+POST /post HTTP/1.1
+Host: httpbin.org
+Content-Type: application/json
+Content-Length: 27
+Connection: close
+
+{"test": "value", "id": 42}

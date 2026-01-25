@@ -1,0 +1,6 @@
+GET /get HTTP/1.1
+Host: httpbin.org
+User-Agent: htreq-test/1.0
+Accept: */*
+Connection: close
+

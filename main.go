@@ -149,6 +149,23 @@ func main() {
 func parseArgs() *config {
 	cfg := &config{}
 
+	// Show help if no arguments provided (check before modifying os.Args)
+	if len(os.Args) == 1 {
+		fmt.Fprintf(os.Stderr, "Usage: %s [target] [options]\n\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "Send raw HTTP requests over TCP or TLS.\n\n")
+		fmt.Fprintf(os.Stderr, "Arguments:\n")
+		fmt.Fprintf(os.Stderr, "  target              host[:port] (optional, extracted from Host header if not provided)\n\n")
+		fmt.Fprintf(os.Stderr, "Options:\n")
+		fmt.Fprintf(os.Stderr, "  -f, --file string   Read request from file\n")
+		fmt.Fprintf(os.Stderr, "  --help              Show this help message\n")
+		fmt.Fprintf(os.Stderr, "\nFor full options, run: %s --help\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "\nExamples:\n")
+		fmt.Fprintf(os.Stderr, "  %s example.com -f request.http                  # Auto-TLS for port 443\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s -f request.http                              # Uses Host from request\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  echo 'GET / HTTP/1.1' | %s example.com          # Read from stdin\n", os.Args[0])
+		os.Exit(0)
+	}
+
 	// Parse target first (before flags)
 	args := os.Args[1:]
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
@@ -196,15 +213,10 @@ func parseArgs() *config {
 		fmt.Fprintf(os.Stderr, "  %s example.com:443 --no-tls -f request.http     # Force plain TCP on 443\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  %s --env-file .env -f request.http | jq\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  sudo %s --unix-socket /var/run/docker.sock -f docker.http\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  echo 'GET / HTTP/1.1' | %s example.com          # Read from stdin\n", os.Args[0])
 	}
 
 	flag.Parse()
-
-	// Show help if no arguments provided
-	if len(os.Args) == 1 {
-		flag.Usage()
-		os.Exit(0)
-	}
 
 	// Determine if we should use colors
 	// Use colors if stdout is a terminal and --no-color is not set

@@ -1,4 +1,4 @@
-.PHONY: build build-release clean install test
+.PHONY: build build-release clean install test test-unit test-integration test-all
 
 BINARY=htreq
 INSTALL_PATH=/usr/local/bin
@@ -17,12 +17,20 @@ install: build-release
 clean:
 	rm -f $(BINARY)
 
-test:
+test-unit:
 	@echo "Running unit tests..."
 	@go test -v -cover
+
+test-integration: build
+	@echo "Running integration tests..."
+	@./test/integration_test.sh
+
+test: test-unit
 	@if [ -f ./compare_versions.sh ]; then \
 		echo "Testing basic functionality..."; \
 		./compare_versions.sh; \
 	fi
+
+test-all: test-unit test-integration
 
 .DEFAULT_GOAL := build
