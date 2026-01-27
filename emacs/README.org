@@ -1,0 +1,420 @@
+#+TITLE: Emacs/Org-Mode Integration
+#+AUTHOR: htreq
+#+OPTIONS: toc:2 num:nil
+
+* Overview
+
+htreq provides seamless integration with Emacs org-mode through ~ob-htreq.el~, allowing you to execute HTTP requests directly from org-mode code blocks.
+
+* Installation
+
+** Using Straight
+
+#+begin_src elisp
+(use-package ob-htreq
+  :straight (:host github :repo "BasicAcid/htreq")
+  :after org
+  :config
+  (org-babel-do-load-languages
+   'org-babel-load-languages
+   '((htreq . t))))
+#+end_src
+
+* Quick Start
+
+** Basic Usage
+
+1. Create an org file with an htreq code block:
+
+#+begin_src htreq :max-bytes 500
+GET / HTTP/1.1
+Host: httpbin.org
+#+end_src
+
+#+RESULTS:
+#+begin_example
+[*] Using host from request: httpbin.org
+[*] Connecting to httpbin.org:443 (TLS)
+HTTP/1.1 200 OK
+Date: Tue, 27 Jan 2026 14:23:34 GMT
+Content-Type: text/html; charset=utf-8
+Content-Length: 9593
+Connection: keep-alive
+Server: gunicorn/19.9.0
+Access-Control-Allow-Origin: *
+Access-Control-Allow-Credentials: true
+
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>httpbin.org</title>
+    <link href="https://fonts.googleapis.com/css?family=Open+Sans:400,700|Source+Code+Pro:300,600|Titillium+Web:400,600,700"
+        rel="stylesheet">
+    <link r
+[*] Response received in 99ms
+#+end_example
+
+2. Place cursor inside the block and press ~C-c C-c~ to execute
+3. Results appear below the code block
+
+** Example with Results
+
+#+begin_src htreq :body t
+GET /json HTTP/1.1
+Host: httpbin.org
+#+end_src
+
+#+RESULTS:
+#+begin_example
+[*] Using host from request: httpbin.org
+[*] Connecting to httpbin.org:443 (TLS)
+{
+  "slideshow": {
+    "author": "Yours Truly",
+    "date": "date of publication",
+    "slides": [
+      {
+        "title": "Wake up to WonderWidgets!",
+        "type": "all"
+      },
+      {
+        "items": [
+          "Why <em>WonderWidgets</em> are great",
+          "Who <em>buys</em> WonderWidgets"
+        ],
+        "title": "Overview",
+        "type": "all"
+      }
+    ],
+    "title": "Sample Slide Show"
+  }
+}
+
+[*] Response received in 204ms
+#+end_example
+
+* Header Arguments
+
+htreq supports rich header arguments for controlling request execution:
+
+** Boolean Flags
+
+| Argument       | Description                          |
+|----------------+--------------------------------------|
+| ~:tls t~         | Force TLS                            |
+| ~:no-tls t~      | Force plain TCP                      |
+| ~:http2 t~       | Use HTTP/2                           |
+| ~:dump-frames t~ | Display HTTP/2 frames                |
+| ~:no-verify t~   | Disable TLS certificate verification |
+| ~:dump-tls t~    | Display TLS session info only        |
+| ~:head t~        | Print only response headers          |
+| ~:body t~        | Print only response body             |
+| ~:quiet t~       | Suppress stderr messages             |
+| ~:verbose t~     | Verbose output                       |
+
+** Value Arguments
+
+| Argument            | Description                      | Example                           |
+|---------------------+----------------------------------+-----------------------------------|
+| ~:target HOST[:PORT]~ | Override target from Host header | ~:target "example.com:8080"~        |
+| ~:env-file PATH~      | Load environment variables       | ~:env-file ".env"~                  |
+| ~:max-bytes N~        | Limit response to N bytes        | ~:max-bytes 1000~                   |
+| ~:timeout N~          | Socket timeout in seconds        | ~:timeout 30~                       |
+| ~:htreq-bin PATH~     | Path to htreq binary             | ~:htreq-bin "/usr/local/bin/htreq"~ |
+
+** Examples
+
+*** Get only headers
+
+#+begin_src htreq :head t
+GET / HTTP/1.1
+Host: httpbin.org
+#+end_src
+
+#+RESULTS:
+#+begin_example
+[*] Using host from request: httpbin.org
+[*] Connecting to httpbin.org:443 (TLS)
+HTTP/1.1 200 OK
+Date: Tue, 27 Jan 2026 14:07:11 GMT
+Content-Type: text/html; charset=utf-8
+Content-Length: 9593
+Connection: keep-alive
+Server: gunicorn/19.9.0
+Access-Control-Allow-Origin: *
+Access-Control-Allow-Credentials: true
+
+
+[*] Response received in 94ms
+#+end_example
+
+*** HTTP/2 with frame inspection
+
+#+begin_src htreq :http2 t :dump-frames t :max-bytes 500
+GET / HTTP/1.1
+Host: www.google.com
+#+end_src
+
+#+RESULTS:
+#+begin_example
+[*] Using host from request: www.google.com
+[*] Connecting to www.google.com:443 (TLS)
+[*] Negotiated protocol: h2
+
+[*] HTTP/2 Connection Preface
+PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n
+[*] SEND: SETTINGS frame
+[*] HPACK Encoded Headers (16 bytes)
+[*] SEND: HEADERS frame (stream 1, 16 bytes HPACK data)
+HTTP/2 200
+Date: Tue, 27 Jan 2026 14:23:55 GMT
+Server: gws
+Accept-Ranges: none
+Content-Security-Policy-Report-Only: object-src 'none';base-uri 'self';script-src 'nonce-45HYjfafIZKyo-y0Yi_ATw' 'strict-dynamic' 'report-sample' 'unsafe-eval' 'unsafe-inline' https: http:;report-uri https://csp.withgoogle.com/csp/gws/other-hp
+X-Xss-Protection: 0
+X-Frame-Options: SAMEORIGIN
+Content-Type: text/html; charset=ISO-8859-1
+Accept-Ch: Sec-CH-Prefers-Color-Scheme
+P3p: CP="This is not a P3P policy! See g.co/p3phelp for more info."
+Alt-Svc: h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+Expires: -1
+Cache-Control: private, max-age=0
+Set-Cookie: __Secure-BUCKET=CCo; expires=Sun, 26-Jul-2026 14:23:55 GMT; path=/; domain=.google.com; Secure; HttpOnly
+Vary: Accept-Encoding
+
+<!doctype html><html itemscope="" itemtype="http://schema.org/WebPage" lang="fr"><head><meta content="text/html; charset=UTF-8" http-equiv="Content-Type"><meta content="/images/branding/googleg/1x/googleg_standard_color_128dp.png" itemprop="image"><title>Google</title><script nonce="45HYjfafIZKyo-y0Yi_ATw">(function(){var _g={kEI:'e8p4afOyHJ-lqtsPov3t4AM',kEXPI:'0,203005,1101198,2900998,34844,14112,64701,217969,142932,226411,20908,5285475,113,23,6,5991831,30819601,25228681,78017,74369,65162,3977
+[*] Response received in 208ms
+#+end_example
+
+*** Limit response size
+
+#+begin_src htreq :max-bytes 500 :body t
+GET / HTTP/1.1
+Host: httpbin.org
+#+end_src
+
+#+RESULTS:
+#+begin_example
+[*] Using host from request: httpbin.org
+[*] Connecting to httpbin.org:443 (TLS)
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>httpbin.org</title>
+    <link href="https://fonts.googleapis.com/css?family=Open+Sans:400,700|Source+Code+Pro:300,600|Titillium+Web:400,600,700"
+        rel="stylesheet">
+    <link rel="stylesheet" type="text/css" href="/flasgger_static/swagger-ui.css">
+    <link rel="icon" type="image/png" href="/static/favicon.ico" sizes="64x64 32x32 16x16" />
+    <style>
+        html {
+            box-sizing: border-box;
+
+[*] Response received in 373ms
+#+end_example
+
+* Variable Substitution
+
+Use ~:var~ to define variables that will be substituted in your HTTP requests:
+
+** Basic Variables
+
+#+begin_src htreq :var host="httpbin.org" endpoint="/get"
+GET $endpoint HTTP/1.1
+Host: ${host}
+#+end_src
+
+#+RESULTS:
+#+begin_example
+[*] Using host from request: httpbin.org
+[*] Connecting to httpbin.org:443 (TLS)
+HTTP/1.1 200 OK
+Date: Tue, 27 Jan 2026 14:08:37 GMT
+Content-Type: application/json
+Content-Length: 198
+Connection: keep-alive
+Server: gunicorn/19.9.0
+Access-Control-Allow-Origin: *
+Access-Control-Allow-Credentials: true
+
+{
+  "args": {},
+  "headers": {
+    "Host": "httpbin.org",
+    "X-Amzn-Trace-Id": "Root=1-6978c6e5-752a3de34a398d1e18acb663"
+  },
+  "origin": "77.158.80.50",
+  "url": "https://httpbin.org/get"
+}
+
+[*] Response received in 129ms
+#+end_example
+
+** API Tokens
+
+#+begin_src htreq :var token="my-secret-token"
+GET /bearer HTTP/1.1
+Host: httpbin.org
+Authorization: Bearer $token
+#+end_src
+
+#+RESULTS:
+#+begin_example
+[*] Using host from request: httpbin.org
+[*] Connecting to httpbin.org:443 (TLS)
+HTTP/1.1 200 OK
+Date: Tue, 27 Jan 2026 14:12:21 GMT
+Content-Type: application/json
+Content-Length: 59
+Connection: keep-alive
+Server: gunicorn/19.9.0
+Access-Control-Allow-Origin: *
+Access-Control-Allow-Credentials: true
+
+{
+  "authenticated": true,
+  "token": "my-secret-token"
+}
+
+[*] Response received in 263ms
+#+end_example
+
+** Multiple Variables
+
+#+begin_src htreq :var api="api.github.com" user="octocat" :body t
+GET /users/${user}/repos HTTP/1.1
+Host: $api
+Accept: application/vnd.github.v3+json
+#+end_src
+
+#+RESULTS:
+: [*] Using host from request: api.github.com
+: [*] Connecting to api.github.com:443 (TLS)
+:
+: Request forbidden by administrative rules. Please make sure your request has a User-Agent header (https://docs.github.com/en/rest/overview/resources-in-the-rest-api#user-agent-required). Check https://developer.github.com for other possible causes.
+:
+: [*] Response received in 21ms
+
+** Variable Formats
+
+Both ~$var~ and ~${var}~ formats are supported:
+- ~$varname~ - Simple variable reference
+- ~${varname}~ - Variable with boundaries (useful in strings)
+
+* Environment Variables
+
+Use ~.env~ files for sensitive data:
+
+**.env file:**
+#+begin_example
+API_TOKEN=ghp_xxxxxxxxxxxx
+API_HOST=api.github.com
+#+end_example
+
+**org-mode block:**
+#+begin_src htreq :env-file ".env"
+GET /user HTTP/1.1
+Host: $API_HOST
+Authorization: token $API_TOKEN
+#+end_src
+
+* Advanced Workflows
+
+** Testing Multiple Endpoints
+
+#+begin_example
+,* API Tests
+
+,** Health Check
+#+begin_src htreq :var base="api.example.com"
+GET /health HTTP/1.1
+Host: $base
+
+#+end_src
+
+,** Get Users
+#+begin_src htreq :var base="api.example.com" :body t
+GET /api/v1/users HTTP/1.1
+Host: $base
+Accept: application/json
+
+#+end_src
+
+,** Create User
+#+begin_src htreq :var base="api.example.com"
+POST /api/v1/users HTTP/1.1
+Host: $base
+Content-Type: application/json
+Content-Length: 41
+
+{"name": "Alice", "email": "alice@example.com"}
+#+end_src
+#+end_example
+
+** Chaining Requests
+
+You can reference results from one block in another:
+
+#+begin_example
+#+name: login
+#+begin_src htreq :body t
+POST /login HTTP/1.1
+Host: api.example.com
+Content-Type: application/json
+Content-Length: 45
+
+{"username": "admin", "password": "secret"}
+#+end_src
+
+#+begin_src emacs-lisp :var response=login
+;; Parse response and extract token
+;; (requires json.el or similar)
+(message "Token: %s" response)
+#+end_src
+#+end_example
+
+* Syntax Highlighting
+
+If you have ~http-mode~ or a custom htreq major mode installed, syntax highlighting will be automatically applied to htreq code blocks.
+
+The ~ob-htreq.el~ file includes:
+#+begin_src elisp
+(add-to-list 'org-src-lang-modes '("htreq" . http))
+#+end_src
+
+This tells org-mode to use ~http-mode~ for syntax highlighting in htreq blocks.
+
+* Troubleshooting
+
+** htreq binary not found
+
+*Error:* ~htreq: command not found~
+
+*Solutions:*
+
+1. Ensure htreq is in your PATH:
+   #+begin_src bash
+   which htreq
+   #+end_src
+
+2. Set the full path in Emacs:
+   #+begin_src elisp
+   (setq ob-htreq-binary "/full/path/to/htreq")
+   #+end_src
+
+3. Or use the ~:htreq-bin~ header argument:
+   #+begin_src htreq :htreq-bin "/usr/local/bin/htreq"
+   ...
+   #+end_src
+
+** Syntax highlighting not working
+
+Install ~http-mode~:
+
+#+begin_src elisp
+(use-package http-mode
+  :straight (:host github :repo "BasicAcid/http-mode"))
+#+end_src
