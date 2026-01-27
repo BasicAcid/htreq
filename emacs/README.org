@@ -22,6 +22,9 @@ htreq provides seamless integration with Emacs org-mode through ~ob-htreq.el~, a
 
 * Quick Start
 
+I recommend you to open this file inside Emacs, so that you can see
+the blocks headers and execute the code.
+
 ** Basic Usage
 
 1. Create an org file with an htreq code block:
