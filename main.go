@@ -60,6 +60,8 @@ type config struct {
 	quiet        bool
 	verbose      bool
 	showTiming   bool
+	retryCount   int
+	retryDelay   time.Duration
 	headersOnly  bool
 	bodyOnly     bool
 	noColor      bool
@@ -182,12 +184,71 @@ func (cfg *config) colorizeHTTPResponse(response []byte) []byte {
 func main() {
 	cfg := parseArgs()
 
-	if err := run(cfg); err != nil {
-		if !cfg.quiet {
-			fmt.Fprintf(os.Stderr, "[!] Error: %v\n", err)
+	var lastErr error
+	for attempt := 0; attempt <= cfg.retryCount; attempt++ {
+		if attempt > 0 {
+			if !cfg.quiet {
+				fmt.Fprintf(os.Stderr, "[*] Retrying in %v... (attempt %d/%d)\n", cfg.retryDelay, attempt, cfg.retryCount)
+			}
+			time.Sleep(cfg.retryDelay)
 		}
-		os.Exit(1)
+
+		err := run(cfg)
+		if err == nil {
+			// Success!
+			os.Exit(0)
+		}
+
+		lastErr = err
+
+		// Check if error is retryable
+		if !isRetryableError(err) {
+			if !cfg.quiet {
+				fmt.Fprintf(os.Stderr, "[!] Error: %v (not retryable)\n", err)
+			}
+			os.Exit(1)
+		}
+
+		if attempt < cfg.retryCount && !cfg.quiet {
+			fmt.Fprintf(os.Stderr, "[!] Attempt %d failed: %v\n", attempt+1, err)
+		}
 	}
+
+	// All retries exhausted
+	if !cfg.quiet {
+		fmt.Fprintf(os.Stderr, "[!] Error: %v (all %d retries exhausted)\n", lastErr, cfg.retryCount)
+	}
+	os.Exit(1)
+}
+
+// isRetryableError determines if an error should trigger a retry
+func isRetryableError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	errStr := err.Error()
+
+	// Network errors that might be transient
+	retryablePatterns := []string{
+		"connection refused",
+		"connection reset",
+		"timeout",
+		"temporary",
+		"no such host",
+		"DNS lookup failed",
+		"TLS handshake failed",
+		"broken pipe",
+		"network is unreachable",
+	}
+
+	for _, pattern := range retryablePatterns {
+		if strings.Contains(strings.ToLower(errStr), pattern) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func parseArgs() *config {
@@ -232,6 +293,8 @@ func parseArgs() *config {
 	flag.BoolVar(&cfg.dumpFrames, "dump-frames", false, "Display HTTP/2 frames (use with --http2)")
 	flag.DurationVar(&cfg.timeout, "timeout", 10*time.Second, "Socket timeout")
 	flag.Int64Var(&cfg.maxBytes, "max-bytes", 0, "Limit response output to N bytes")
+	flag.IntVar(&cfg.retryCount, "retry", 0, "Number of retries on failure (0 = no retries)")
+	flag.DurationVar(&cfg.retryDelay, "retry-delay", 1*time.Second, "Delay between retries")
 	flag.BoolVar(&cfg.printRequest, "print-request", false, "Print the request being sent to stderr")
 	flag.BoolVar(&cfg.quiet, "q", false, "Suppress stderr messages")
 	flag.BoolVar(&cfg.quiet, "quiet", false, "Suppress stderr messages")

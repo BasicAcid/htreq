@@ -278,6 +278,17 @@ run_test \
     "$BINARY --http2 --timing -f $FIXTURES_DIR/get-http2.http 2>&1" \
     "TLS handshake:"
 
+run_test \
+    "--retry flag with invalid host" \
+    "$BINARY invalid.example.com:80 --retry 1 --retry-delay 100ms -f $FIXTURES_DIR/get-http.http 2>&1" \
+    "Retrying" \
+    "true"
+
+run_test \
+    "--retry flag succeeds on working endpoint" \
+    "$BINARY -f $FIXTURES_DIR/get-https.http --retry 2" \
+    "HTTP/1.1 200"
+
 # ============================================================================
 # Test Summary
 # ============================================================================
