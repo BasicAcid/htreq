@@ -4,123 +4,185 @@
 [![Release](https://img.shields.io/github/v/release/BasicAcid/htreq)](https://github.com/BasicAcid/htreq/releases/latest)
 [![License](https://img.shields.io/github/license/BasicAcid/htreq)](LICENSE)
 
-Send raw HTTP requests over TCP or TLS.
+Send raw HTTP requests over TCP or TLS with complete control.
 
-htreq is a command-line tool for testing HTTP APIs with complete control over the request. What you write is exactly what gets sent over the wire - no abstraction, no magic.
+**What makes htreq different:** Unlike curl which abstracts the request, or Hurl which uses its own syntax, htreq sends exactly what you write - raw HTTP bytes over the wire. No hidden headers, no automatic behaviors, just your request exactly as specified.
 
 ## Features
 
-- HTTP/1.1 with chunked encoding
-- HTTP/2 with ALPN negotiation
-- WebSocket protocol support
-- TLS with auto-detection for port 443
-- Unix socket support (e.g., Docker API)
-- Environment variable expansion
-- Colored output (auto-disabled when piped)
-- Response timing
+- **HTTP/1.1** - Full support including chunked encoding
+- **HTTP/2** - With ALPN negotiation and frame inspection
+- **WebSocket** - Interactive protocol upgrade and messaging
+- **TLS** - Auto-detection for port 443, certificate inspection
+- **Unix sockets** - Connect to Docker API and other socket services
+- **Environment variables** - Expand `$VAR` in request files
+- **Colored output** - Syntax highlighting (auto-disabled when piped)
+- **Request timing** - Detailed breakdown of connection phases
+- **Automatic retries** - Configurable retry logic for transient failures
 
 ## Installation
 
-### Debian/Ubuntu Package
+### Debian/Ubuntu
 
-Download the `.deb` package from the [releases page](https://github.com/BasicAcid/htreq/releases/latest):
+Download from [releases](https://github.com/BasicAcid/htreq/releases/latest):
 
 ```bash
-# For amd64 (x86_64)
 wget https://github.com/BasicAcid/htreq/releases/latest/download/htreq_VERSION_amd64.deb
 sudo dpkg -i htreq_VERSION_amd64.deb
-
-# For arm64
-wget https://github.com/BasicAcid/htreq/releases/latest/download/htreq_VERSION_arm64.deb
-sudo dpkg -i htreq_VERSION_arm64.deb
 ```
 
 ### From Source
 
-**Requirements:** Go 1.24+
+Requires Go 1.24+:
 
 ```bash
 git clone https://github.com/BasicAcid/htreq
 cd htreq
 make
-sudo make install  # installs to /usr/local/bin
+sudo make install
 ```
 
-## Usage
+## Quick Start
 
-Create a request file with raw HTTP:
+Create a request file `request.http`:
 
 ```http
-POST /api/users HTTP/1.1
-Host: api.example.com
+GET /get HTTP/1.1
+Host: httpbin.org
+Accept: application/json
+```
+
+Send it:
+
+```bash
+htreq -f request.http
+```
+
+That's it. The target is extracted from the `Host` header, and TLS is auto-enabled for port 443.
+
+## Usage Examples
+
+### Basic GET Request
+
+**File:** `get.http`
+```http
+GET /json HTTP/1.1
+Host: httpbin.org
+Accept: application/json
+```
+
+**Command:**
+```bash
+htreq -f get.http
+```
+
+### POST with JSON
+
+**File:** `post.http`
+```http
+POST /post HTTP/1.1
+Host: httpbin.org
 Content-Type: application/json
 Content-Length: 27
 
 {"name": "Alice", "age": 30}
 ```
 
-Send it:
+**Command:**
 ```bash
-htreq -f request.http
+htreq -f post.http --body | jq .
 ```
 
-The target (host:port) can be specified explicitly or extracted from the Host header. TLS is automatically enabled for port 443.
+### Environment Variables
 
-## Examples
-
-**Simple GET request:**
-```bash
-echo "GET /json HTTP/1.1
-Host: httpbin.org
-
-" | htreq
+Create `.env`:
+```
+API_TOKEN=your-secret-token
 ```
 
-**POST with JSON:**
-```bash
-htreq -f post.http --body | jq
+**File:** `api.http`
+```http
+GET /api/data HTTP/1.1
+Host: api.example.com
+Authorization: Bearer $API_TOKEN
+Accept: application/json
 ```
 
-**HTTP/2:**
+**Command:**
 ```bash
-htreq --http2 -f request.http
+htreq --env-file .env -f api.http
 ```
 
-**WebSocket:**
+### HTTP/2
+
+**File:** `http2.http`
+```http
+GET / HTTP/1.1
+Host: cloudflare.com
+```
+
+**Command:**
+```bash
+htreq --http2 -f http2.http
+```
+
+### WebSocket
+
+**File:** `websocket.http`
+```http
+GET /chat HTTP/1.1
+Host: websocket.example.com
+Upgrade: websocket
+Connection: Upgrade
+Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==
+Sec-WebSocket-Version: 13
+```
+
+**Command:**
 ```bash
 htreq --websocket -f websocket.http
-# Type messages, press Enter to send, Ctrl+C to exit
 ```
 
-**Environment variables:**
+Type messages and press Enter to send. Press Ctrl+C to exit.
+
+### Unix Socket (Docker API)
+
+**File:** `docker.http`
+```http
+GET /containers/json HTTP/1.1
+Host: localhost
+```
+
+**Command:**
 ```bash
-# Create .env file
-cat > .env << EOF
-API_TOKEN=secret-token
-EOF
-
-# Use in request
-echo "GET /api HTTP/1.1
-Host: api.example.com
-Authorization: Bearer \$API_TOKEN
-
-" | htreq --env-file .env
+sudo htreq --unix-socket /var/run/docker.sock -f docker.http
 ```
 
-**Unix socket (Docker API):**
+### Debugging with Timing
+
 ```bash
-sudo htreq --unix-socket /var/run/docker.sock -f docker-version.http
+htreq -f request.http --timing
 ```
 
-**Scripting:**
+Shows detailed breakdown:
+```
+[*] Timing breakdown:
+DNS lookup:      21.796ms
+TCP connect:     33.709ms
+TLS handshake:   27.184ms
+Request send:    10µs
+Server processing: 36.667ms
+Content download: 101µs
+Total:           119.501ms
+```
+
+### Automatic Retries
+
 ```bash
-# Extract token and use in next request
-TOKEN=$(htreq -f login.http --body | jq -r '.token')
-export API_TOKEN="$TOKEN"
-htreq --env -f authenticated.http
+htreq -f request.http --retry 3 --retry-delay 2s
 ```
 
-## Options
+## Command-Line Options
 
 ```
 Usage: htreq [target] [options]
@@ -131,20 +193,28 @@ Arguments:
 Options:
   -f, --file FILE         Request file (default: stdin)
   --unix-socket PATH      Connect to Unix socket
-  --env                   Expand environment variables
-  --env-file FILE         Load variables from file
+  --env                   Expand environment variables ($VAR or ${VAR})
+  --env-file FILE         Load environment variables from file
+
   --tls                   Force TLS (auto-enabled for port 443)
   --no-tls                Disable TLS
   --no-verify             Skip TLS certificate verification
-  --dump-tls              Show TLS session info
-  --http2                 Use HTTP/2
+  --dump-tls              Show TLS session and certificate info
+
+  --http2                 Use HTTP/2 protocol
   --websocket, --ws       Use WebSocket protocol
-  --dump-frames           Show HTTP/2 frames
+  --dump-frames           Show HTTP/2 frames (requires --http2)
+
+  --retry N               Number of retries on failure (default: 0)
+  --retry-delay DURATION  Delay between retries (default: 1s)
   --timeout DURATION      Socket timeout (default: 10s)
-  --max-bytes N           Limit response output
+  --max-bytes N           Limit response output to N bytes
+
   --print-request         Show request being sent
-  --head                  Show only headers
-  --body                  Show only body
+  --timing                Show detailed request/response timing
+  --head                  Show only response headers
+  --body                  Show only response body
+
   --no-color              Disable colored output
   -q, --quiet             Suppress informational messages
   -v, --verbose           Verbose output
@@ -157,18 +227,20 @@ Standard HTTP format:
 ```http
 METHOD /path HTTP/1.1
 Header-Name: value
-Another-Header: value
+Content-Type: application/json
+Content-Length: 27
 
-Optional body content
+Request body content here
 ```
 
-Lines must end with `\r\n` or `\n` (htreq normalizes automatically).
-
-Use `$VAR` or `${VAR}` for environment variable substitution with `--env` flag.
+**Notes:**
+- Line endings are automatically normalized (CRLF or LF accepted)
+- Environment variables with `--env`: Use `$VAR` or `${VAR}` syntax
+- Target can be specified in the `Host` header or as a command-line argument
 
 ## Examples Directory
 
-The `examples/` directory contains ready-to-run request files:
+The `examples/` directory contains ready-to-use request files:
 
 ```bash
 htreq -f examples/get-https.http
@@ -177,8 +249,8 @@ htreq --http2 -f examples/http2-example.http
 htreq --websocket -f examples/websocket-echo.http
 ```
 
-See `examples/README.md` for complete list.
+See `examples/README.md` for complete documentation.
 
 ## License
 
-GNU General Public License v3.0 - see LICENSE file.
+GNU General Public License v3.0 - see [LICENSE](LICENSE) file.
