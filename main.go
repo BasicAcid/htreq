@@ -59,10 +59,54 @@ type config struct {
 	printRequest bool
 	quiet        bool
 	verbose      bool
+	showTiming   bool
 	headersOnly  bool
 	bodyOnly     bool
 	noColor      bool
 	useColor     bool // Computed: whether to actually use colors
+}
+
+// timingInfo holds detailed timing information for a request
+type timingInfo struct {
+	dnsStart     time.Time
+	dnsDone      time.Time
+	connectStart time.Time
+	connectDone  time.Time
+	tlsStart     time.Time
+	tlsDone      time.Time
+	sendStart    time.Time
+	sendDone     time.Time
+	firstByte    time.Time
+	responseDone time.Time
+}
+
+// durations returns the timing breakdown as a formatted string
+func (t *timingInfo) durations() string {
+	var parts []string
+
+	if !t.dnsStart.IsZero() && !t.dnsDone.IsZero() {
+		parts = append(parts, fmt.Sprintf("DNS lookup:      %v", t.dnsDone.Sub(t.dnsStart).Round(time.Microsecond)))
+	}
+	if !t.connectStart.IsZero() && !t.connectDone.IsZero() {
+		parts = append(parts, fmt.Sprintf("TCP connect:     %v", t.connectDone.Sub(t.connectStart).Round(time.Microsecond)))
+	}
+	if !t.tlsStart.IsZero() && !t.tlsDone.IsZero() {
+		parts = append(parts, fmt.Sprintf("TLS handshake:   %v", t.tlsDone.Sub(t.tlsStart).Round(time.Microsecond)))
+	}
+	if !t.sendStart.IsZero() && !t.sendDone.IsZero() {
+		parts = append(parts, fmt.Sprintf("Request send:    %v", t.sendDone.Sub(t.sendStart).Round(time.Microsecond)))
+	}
+	if !t.sendDone.IsZero() && !t.firstByte.IsZero() {
+		parts = append(parts, fmt.Sprintf("Server processing: %v", t.firstByte.Sub(t.sendDone).Round(time.Microsecond)))
+	}
+	if !t.firstByte.IsZero() && !t.responseDone.IsZero() {
+		parts = append(parts, fmt.Sprintf("Content download: %v", t.responseDone.Sub(t.firstByte).Round(time.Microsecond)))
+	}
+	if !t.dnsStart.IsZero() && !t.responseDone.IsZero() {
+		parts = append(parts, fmt.Sprintf("Total:           %v", t.responseDone.Sub(t.dnsStart).Round(time.Microsecond)))
+	}
+
+	return strings.Join(parts, "\n")
 }
 
 // Color helpers
@@ -193,6 +237,7 @@ func parseArgs() *config {
 	flag.BoolVar(&cfg.quiet, "quiet", false, "Suppress stderr messages")
 	flag.BoolVar(&cfg.verbose, "v", false, "Verbose connection info")
 	flag.BoolVar(&cfg.verbose, "verbose", false, "Verbose connection info")
+	flag.BoolVar(&cfg.showTiming, "timing", false, "Show detailed request/response timing breakdown")
 	flag.BoolVar(&cfg.headersOnly, "head", false, "Print only HTTP response headers")
 	flag.BoolVar(&cfg.bodyOnly, "body", false, "Print only HTTP response body")
 	flag.BoolVar(&cfg.noColor, "no-color", false, "Disable colored output")
@@ -316,7 +361,7 @@ func run(cfg *config) error {
 
 	// For TLS dump, we don't need a request - just connect and dump
 	if cfg.dumpTLS {
-		conn, err := connect(cfg)
+		conn, err := connect(cfg, nil)
 		if err != nil {
 			return err
 		}
@@ -356,13 +401,19 @@ func run(cfg *config) error {
 		return fmt.Errorf("target is required unless --unix-socket is used")
 	}
 
+	// Initialize timing if requested
+	var timing *timingInfo
+	if cfg.showTiming {
+		timing = &timingInfo{}
+	}
+
 	// Use WebSocket if requested (handles its own connection)
 	if cfg.useWebSocket {
-		return runWebSocket(request, cfg)
+		return runWebSocket(request, cfg, timing)
 	}
 
 	// Connect (for HTTP/1.1 and HTTP/2)
-	conn, err := connect(cfg)
+	conn, err := connect(cfg, timing)
 	if err != nil {
 		return err
 	}
@@ -378,10 +429,15 @@ func run(cfg *config) error {
 		if !ok {
 			return fmt.Errorf("internal error: expected TLS connection but got %T", conn)
 		}
-		return runHTTP2(tlsConn, request, cfg)
+		return runHTTP2(tlsConn, request, cfg, timing)
 	}
 
 	// HTTP/1.1 mode
+	return runHTTP1(conn, request, cfg, timing)
+}
+
+// runHTTP1 handles HTTP/1.1 request/response with detailed timing
+func runHTTP1(conn net.Conn, request string, cfg *config, timing *timingInfo) error {
 	// Print request if requested
 	if cfg.printRequest && !cfg.quiet {
 		fmt.Fprintf(os.Stderr, "[*] Sending request:\n")
@@ -390,27 +446,75 @@ func run(cfg *config) error {
 		fmt.Fprintf(os.Stderr, "%s\n", strings.Repeat("-", 40))
 	}
 
-	// Start timing
-	startTime := time.Now()
+	// Timing: request send start
+	if timing != nil {
+		timing.sendStart = time.Now()
+	}
 
 	// Send request
 	if _, err := conn.Write([]byte(request)); err != nil {
 		return fmt.Errorf("send failed: %w", err)
 	}
 
-	// Read and process response
-	err = readResponse(conn, cfg)
+	// Timing: request send done
+	if timing != nil {
+		timing.sendDone = time.Now()
+	}
 
-	// Display timing
-	if !cfg.quiet {
-		elapsed := time.Since(startTime)
-		fmt.Fprintf(os.Stderr, "\n[*] Response received in %v\n", elapsed.Round(time.Millisecond))
+	// Read first byte to capture TTFB timing
+	if timing != nil {
+		buf := make([]byte, 1)
+		conn.SetReadDeadline(time.Now().Add(cfg.timeout))
+		n, err := conn.Read(buf)
+		if err != nil {
+			return fmt.Errorf("read failed: %w", err)
+		}
+		if n > 0 {
+			timing.firstByte = time.Now()
+
+			// Push the byte back by creating a wrapped connection
+			conn = &prefixConn{
+				Conn:   conn,
+				prefix: buf[:n],
+			}
+		}
+	}
+
+	// Read and process response
+	err := readResponse(conn, cfg)
+
+	// Mark response completion
+	if timing != nil {
+		timing.responseDone = time.Now()
+	}
+
+	// Display timing breakdown
+	if timing != nil && !cfg.quiet {
+		fmt.Fprintf(os.Stderr, "\n[*] Timing breakdown:\n")
+		fmt.Fprintf(os.Stderr, "%s\n", timing.durations())
 	}
 
 	return err
 }
 
-func connect(cfg *config) (net.Conn, error) {
+// prefixConn wraps a net.Conn to prepend bytes that were already read
+type prefixConn struct {
+	net.Conn
+	prefix []byte
+	used   bool
+}
+
+func (c *prefixConn) Read(p []byte) (n int, err error) {
+	if !c.used && len(c.prefix) > 0 {
+		c.used = true
+		n = copy(p, c.prefix)
+		return n, nil
+	}
+	return c.Conn.Read(p)
+}
+
+// readResponseWithTiming reads response while tracking first byte and completion timing
+func connect(cfg *config, timing *timingInfo) (net.Conn, error) {
 	if cfg.unixSocket != "" {
 		if !cfg.quiet {
 			fmt.Fprintf(os.Stderr, "[*] Connecting to Unix socket %s\n", cfg.unixSocket)
@@ -429,10 +533,37 @@ func connect(cfg *config) (net.Conn, error) {
 		fmt.Fprintf(os.Stderr, "[*] Connecting to %s:%s%s\n", host, port, tlsStr)
 	}
 
+	// DNS resolution timing
+	if timing != nil {
+		timing.dnsStart = time.Now()
+	}
+
+	// Resolve hostname to get timing
+	resolver := &net.Resolver{}
+	ctx, cancel := context.WithTimeout(context.Background(), cfg.timeout)
+	defer cancel()
+	_, err := resolver.LookupHost(ctx, host)
+	if err != nil {
+		return nil, fmt.Errorf("DNS lookup failed: %w", err)
+	}
+
+	if timing != nil {
+		timing.dnsDone = time.Now()
+	}
+
+	// TCP connection timing
+	if timing != nil {
+		timing.connectStart = time.Now()
+	}
+
 	// Connect TCP
 	conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, port), cfg.timeout)
 	if err != nil {
 		return nil, fmt.Errorf("connection failed: %w", err)
+	}
+
+	if timing != nil {
+		timing.connectDone = time.Now()
 	}
 
 	// Wrap with TLS if needed
@@ -450,9 +581,19 @@ func connect(cfg *config) (net.Conn, error) {
 		}
 
 		tlsConn := tls.Client(conn, tlsConfig)
+
+		// TLS handshake timing
+		if timing != nil {
+			timing.tlsStart = time.Now()
+		}
+
 		if err := tlsConn.Handshake(); err != nil {
 			_ = conn.Close()
 			return nil, fmt.Errorf("TLS handshake failed: %w", err)
+		}
+
+		if timing != nil {
+			timing.tlsDone = time.Now()
 		}
 
 		// Verify HTTP/2 was negotiated if requested
@@ -903,7 +1044,7 @@ func tlsVersionString(version uint16) string {
 
 // HTTP/2 implementation
 
-func runHTTP2(conn *tls.Conn, request string, cfg *config) error {
+func runHTTP2(conn *tls.Conn, request string, cfg *config, timing *timingInfo) error {
 	// Parse the HTTP/1.1 request into method, path, headers, body
 	method, path, headers, body, err := parseHTTPRequest(request)
 	if err != nil {
@@ -949,8 +1090,10 @@ func runHTTP2(conn *tls.Conn, request string, cfg *config) error {
 		fmt.Fprintf(os.Stderr, "[*] SEND: SETTINGS frame\n")
 	}
 
-	// Start timing (after connection setup)
-	startTime := time.Now()
+	// Timing: request send start
+	if timing != nil {
+		timing.sendStart = time.Now()
+	}
 
 	// Send HEADERS frame
 	headerBlock := encodeHeaders(method, path, headers, cfg)
@@ -976,13 +1119,20 @@ func runHTTP2(conn *tls.Conn, request string, cfg *config) error {
 		}
 	}
 
+	// Timing: request send done
+	if timing != nil {
+		timing.sendDone = time.Now()
+	}
+
 	// Read response
-	err = readHTTP2Response(framer, cfg)
+	err = readHTTP2Response(framer, cfg, timing)
 
 	// Display timing
-	if !cfg.quiet {
-		elapsed := time.Since(startTime)
-		fmt.Fprintf(os.Stderr, "\n[*] Response received in %v\n", elapsed.Round(time.Millisecond))
+	if timing != nil && !cfg.quiet {
+		fmt.Fprintf(os.Stderr, "\n[*] Timing breakdown:\n")
+		fmt.Fprintf(os.Stderr, "%s\n", timing.durations())
+	} else if !cfg.quiet {
+		fmt.Fprintf(os.Stderr, "\n[*] Response received\n")
 	}
 
 	return err
@@ -1093,7 +1243,7 @@ func encodeHeaders(method, path string, headers map[string]string, cfg *config) 
 	return headerBlock
 }
 
-func readHTTP2Response(framer *http2.Framer, cfg *config) error {
+func readHTTP2Response(framer *http2.Framer, cfg *config, timing *timingInfo) error {
 	output := os.Stdout
 	var bytesWritten int64
 	headersReceived := false
@@ -1107,6 +1257,9 @@ func readHTTP2Response(framer *http2.Framer, cfg *config) error {
 		frame, err := framer.ReadFrame()
 		if err != nil {
 			if err == io.EOF {
+				if timing != nil && timing.responseDone.IsZero() {
+					timing.responseDone = time.Now()
+				}
 				break
 			}
 			return fmt.Errorf("failed to read frame: %w", err)
@@ -1120,6 +1273,11 @@ func readHTTP2Response(framer *http2.Framer, cfg *config) error {
 			}
 
 		case *http2.HeadersFrame:
+			// Capture first byte timing when we receive headers
+			if timing != nil && timing.firstByte.IsZero() {
+				timing.firstByte = time.Now()
+			}
+
 			// Decode headers
 			if _, err := decoder.Write(f.HeaderBlockFragment()); err != nil {
 				return fmt.Errorf("failed to decode headers: %w", err)
@@ -1152,6 +1310,9 @@ func readHTTP2Response(framer *http2.Framer, cfg *config) error {
 			}
 
 			if cfg.headersOnly {
+				if timing != nil && timing.responseDone.IsZero() {
+					timing.responseDone = time.Now()
+				}
 				return nil
 			}
 
@@ -1167,17 +1328,26 @@ func readHTTP2Response(framer *http2.Framer, cfg *config) error {
 				bytesWritten += int64(len(toWrite))
 
 				if cfg.maxBytes > 0 && bytesWritten >= cfg.maxBytes {
+					if timing != nil && timing.responseDone.IsZero() {
+						timing.responseDone = time.Now()
+					}
 					return nil
 				}
 			}
 
 			if f.StreamEnded() {
+				if timing != nil && timing.responseDone.IsZero() {
+					timing.responseDone = time.Now()
+				}
 				return nil
 			}
 
 		case *http2.GoAwayFrame:
 			if !cfg.quiet {
 				fmt.Fprintf(os.Stderr, "[*] Server sent GOAWAY\n")
+			}
+			if timing != nil && timing.responseDone.IsZero() {
+				timing.responseDone = time.Now()
 			}
 			return nil
 
@@ -1239,7 +1409,7 @@ func min(a, b int) int {
 
 // WebSocket implementation
 
-func runWebSocket(request string, cfg *config) error {
+func runWebSocket(request string, cfg *config, timing *timingInfo) error {
 	// Extract the URL from the request for gorilla/websocket
 	lines := strings.Split(request, "\r\n")
 	if len(lines) == 0 {
@@ -1280,6 +1450,9 @@ func runWebSocket(request string, cfg *config) error {
 
 	// Start timing
 	startTime := time.Now()
+	if timing != nil {
+		timing.dnsStart = startTime
+	}
 
 	// Create WebSocket dialer with custom TLS config if needed
 	dialer := &websocket.Dialer{
@@ -1322,12 +1495,20 @@ func runWebSocket(request string, cfg *config) error {
 	}
 	// Note: connection is closed in handleWebSocketSession
 
+	elapsed := time.Since(startTime)
+	if timing != nil {
+		timing.responseDone = time.Now()
+	}
+
 	if !cfg.quiet {
-		elapsed := time.Since(startTime)
 		protocol := cfg.colorize(colorGray, "WebSocket")
 		coloredStatus := cfg.colorStatus(strconv.Itoa(resp.StatusCode))
 		fmt.Fprintf(os.Stderr, "%s %s %s\n", protocol, coloredStatus, resp.Status)
 		fmt.Fprintf(os.Stderr, "[*] Connection established in %v\n\n", elapsed.Round(time.Millisecond))
+		if timing != nil {
+			fmt.Fprintf(os.Stderr, "[*] Timing breakdown:\n")
+			fmt.Fprintf(os.Stderr, "%s\n\n", timing.durations())
+		}
 		fmt.Fprintf(os.Stderr, "[*] Type messages and press Enter to send. Press Ctrl+C to exit.\n\n")
 	}
 

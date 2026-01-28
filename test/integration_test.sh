@@ -268,6 +268,16 @@ run_test \
     "$BINARY --no-verify -f $FIXTURES_DIR/get-https.http" \
     "HTTP/1.1 200"
 
+run_test \
+    "--timing flag shows detailed breakdown" \
+    "$BINARY --timing -f $FIXTURES_DIR/get-https.http 2>&1" \
+    "DNS lookup:"
+
+run_test \
+    "--timing with HTTP/2" \
+    "$BINARY --http2 --timing -f $FIXTURES_DIR/get-http2.http 2>&1" \
+    "TLS handshake:"
+
 # ============================================================================
 # Test Summary
 # ============================================================================
