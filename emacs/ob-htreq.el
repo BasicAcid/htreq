@@ -94,6 +94,10 @@ Replaces $varname and ${varname} with values from VARS."
       (setq args (append args '("--tls"))))
     (when (assoc :http2 params)
       (setq args (append args '("--http2"))))
+    (when (assoc :http3 params)
+      (setq args (append args '("--http3"))))
+    (when (assoc :websocket params)
+      (setq args (append args '("--websocket"))))
     (when (assoc :dump-frames params)
       (setq args (append args '("--dump-frames"))))
     (when (assoc :no-verify params)
@@ -108,6 +112,16 @@ Replaces $varname and ${varname} with values from VARS."
       (setq args (append args '("--quiet"))))
     (when (assoc :verbose params)
       (setq args (append args '("--verbose"))))
+    (when (assoc :timing params)
+      (setq args (append args '("--timing"))))
+    (when (assoc :follow params)
+      (setq args (append args '("--follow"))))
+    (when (assoc :print-request params)
+      (setq args (append args '("--print-request"))))
+    (when (assoc :no-alt-svc params)
+      (setq args (append args '("--no-alt-svc"))))
+    (when (assoc :no-color params)
+      (setq args (append args '("--no-color"))))
 
     ;; Value flags
     (let ((env-file (cdr (assoc :env-file params))))
@@ -121,6 +135,26 @@ Replaces $varname and ${varname} with values from VARS."
     (let ((timeout (cdr (assoc :timeout params))))
       (when timeout
         (setq args (append args (list (format "--timeout=%ss" timeout))))))
+
+    (let ((user (cdr (assoc :user params))))
+      (when user
+        (setq args (append args (list (format "--user=%s" user))))))
+
+    (let ((retry (cdr (assoc :retry params))))
+      (when retry
+        (setq args (append args (list (format "--retry=%s" retry))))))
+
+    (let ((retry-delay (cdr (assoc :retry-delay params))))
+      (when retry-delay
+        (setq args (append args (list (format "--retry-delay=%s" retry-delay))))))
+
+    (let ((max-redirects (cdr (assoc :max-redirects params))))
+      (when max-redirects
+        (setq args (append args (list (format "--max-redirects=%s" max-redirects))))))
+
+    (let ((unix-socket (cdr (assoc :unix-socket params))))
+      (when unix-socket
+        (setq args (append args (list (format "--unix-socket=%s" unix-socket))))))
 
     ;; Add -f and file at the end
     (setq args (append args (list "-f" file)))

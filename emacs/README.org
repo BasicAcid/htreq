@@ -104,27 +104,39 @@ htreq supports rich header arguments for controlling request execution:
 
 ** Boolean Flags
 
-| Argument       | Description                          |
-|----------------+--------------------------------------|
-| ~:tls t~         | Force TLS                            |
-| ~:no-tls t~      | Force plain TCP                      |
-| ~:http2 t~       | Use HTTP/2                           |
-| ~:dump-frames t~ | Display HTTP/2 frames                |
-| ~:no-verify t~   | Disable TLS certificate verification |
-| ~:dump-tls t~    | Display TLS session info only        |
-| ~:head t~        | Print only response headers          |
-| ~:body t~        | Print only response body             |
-| ~:quiet t~       | Suppress stderr messages             |
-| ~:verbose t~     | Verbose output                       |
+| Argument           | Description                          |
+|--------------------+--------------------------------------|
+| ~:tls t~           | Force TLS                            |
+| ~:no-tls t~        | Force plain TCP                      |
+| ~:http2 t~         | Use HTTP/2                           |
+| ~:http3 t~         | Use HTTP/3 (QUIC)                    |
+| ~:websocket t~     | Use WebSocket protocol               |
+| ~:dump-frames t~   | Display HTTP/2 frames                |
+| ~:no-verify t~     | Disable TLS certificate verification |
+| ~:dump-tls t~      | Display TLS session info only        |
+| ~:head t~          | Print only response headers          |
+| ~:body t~          | Print only response body             |
+| ~:quiet t~         | Suppress stderr messages             |
+| ~:verbose t~       | Verbose output                       |
+| ~:timing t~        | Show detailed timing breakdown       |
+| ~:follow t~        | Follow HTTP redirects                |
+| ~:print-request t~ | Print request being sent             |
+| ~:no-alt-svc t~    | Suppress Alt-Svc hints               |
+| ~:no-color t~      | Disable colored output               |
 
 ** Value Arguments
 
-| Argument            | Description                      | Example                           |
-|---------------------+----------------------------------+-----------------------------------|
-| ~:target HOST[:PORT]~ | Override target from Host header | ~:target "example.com:8080"~        |
-| ~:env-file PATH~      | Load environment variables       | ~:env-file ".env"~                  |
-| ~:max-bytes N~        | Limit response to N bytes        | ~:max-bytes 1000~                   |
-| ~:timeout N~          | Socket timeout in seconds        | ~:timeout 30~                       |
+| Argument              | Description                      | Example                           |
+|-----------------------+----------------------------------+-----------------------------------|
+| ~:target HOST[:PORT]~ | Override target from Host header | ~:target "example.com:8080"~      |
+| ~:env-file PATH~      | Load environment variables       | ~:env-file ".env"~                |
+| ~:max-bytes N~        | Limit response to N bytes        | ~:max-bytes 1000~                 |
+| ~:timeout N~          | Socket timeout in seconds        | ~:timeout 30~                     |
+| ~:user USER:PASS~     | Basic authentication             | ~:user "admin:secret"~            |
+| ~:retry N~            | Number of retries on failure     | ~:retry 3~                        |
+| ~:retry-delay N~      | Delay between retries            | ~:retry-delay "2s"~               |
+| ~:max-redirects N~    | Maximum redirects to follow      | ~:max-redirects 5~                |
+| ~:unix-socket PATH~   | Connect via Unix socket          | ~:unix-socket "/var/run/docker.sock"~ |
 | ~:htreq-bin PATH~     | Path to htreq binary             | ~:htreq-bin "/usr/local/bin/htreq"~ |
 
 ** Examples
@@ -189,6 +201,86 @@ Vary: Accept-Encoding
 
 <!doctype html><html itemscope="" itemtype="http://schema.org/WebPage" lang="fr"><head><meta content="text/html; charset=UTF-8" http-equiv="Content-Type"><meta content="/images/branding/googleg/1x/googleg_standard_color_128dp.png" itemprop="image"><title>Google</title><script nonce="45HYjfafIZKyo-y0Yi_ATw">(function(){var _g={kEI:'e8p4afOyHJ-lqtsPov3t4AM',kEXPI:'0,203005,1101198,2900998,34844,14112,64701,217969,142932,226411,20908,5285475,113,23,6,5991831,30819601,25228681,78017,74369,65162,3977
 [*] Response received in 208ms
+#+end_example
+
+*** HTTP/3 with QUIC
+
+#+begin_src htreq :http3 t :body t :max-bytes 200
+GET / HTTP/1.1
+Host: google.com
+#+end_src
+
+#+RESULTS:
+#+begin_example
+[*] Using host from request: google.com
+[*] Connecting to google.com:443 (HTTP/3/QUIC)
+<!doctype html><html itemscope="" itemtype="http://schema.org/WebPage" lang="en">
+<head><meta content="text/html; charset=UTF-8" http-equiv="Content-Type">
+[i] Server advertises HTTP/3 support via Alt-Svc
+#+end_example
+
+*** Basic Authentication
+
+#+begin_src htreq :user "testuser:testpass" :body t
+GET /basic-auth/testuser/testpass HTTP/1.1
+Host: httpbin.org
+#+end_src
+
+#+RESULTS:
+#+begin_example
+[*] Using host from request: httpbin.org
+[*] Connecting to httpbin.org:443 (TLS)
+{
+  "authenticated": true,
+  "user": "testuser"
+}
+#+end_example
+
+*** Request Timing Analysis
+
+#+begin_src htreq :timing t :head t
+GET / HTTP/1.1
+Host: httpbin.org
+#+end_src
+
+#+RESULTS:
+#+begin_example
+[*] Using host from request: httpbin.org
+[*] Connecting to httpbin.org:443 (TLS)
+HTTP/1.1 200 OK
+Date: Sat, 31 Jan 2026 00:30:00 GMT
+Content-Type: text/html; charset=utf-8
+
+[*] Timing breakdown:
+DNS lookup:      22.454ms
+TCP connect:     39.809ms
+TLS handshake:   28.810ms
+Request send:    0.006ms
+Server processing: 23.894ms
+Content download: 0.046ms
+Total:           115.028ms
+#+end_example
+
+*** Automatic Redirects
+
+#+begin_src htreq :follow t :body t :max-bytes 200
+GET /redirect/3 HTTP/1.1
+Host: httpbin.org
+#+end_src
+
+#+RESULTS:
+#+begin_example
+[*] Using host from request: httpbin.org
+[*] Connecting to httpbin.org:443 (TLS)
+[*] Following redirect (1/10): /redirect/2
+[*] Following redirect (2/10): /redirect/1
+[*] Following redirect (3/10): /get
+{
+  "args": {},
+  "headers": {
+    "Host": "httpbin.org"
+  }
+}
 #+end_example
 
 *** Limit response size
