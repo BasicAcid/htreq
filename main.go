@@ -1639,31 +1639,30 @@ func runHTTP3(request string, cfg *config, timing *timingInfo) error {
 		req.Header.Set(k, v)
 	}
 
-	// Timing: connection start
+	// Timing: connection and request start (HTTP/3 combines these)
 	if timing != nil {
-		timing.connectStart = time.Now()
+		timing.dnsStart = time.Now()
+		timing.connectStart = timing.dnsStart
+		timing.sendStart = timing.dnsStart
 	}
 
 	if !cfg.quiet {
 		fmt.Fprintf(os.Stderr, "[*] Connecting to %s:%s (HTTP/3/QUIC)\n", host, port)
 	}
 
-	// Timing: request send start
-	if timing != nil {
-		timing.sendStart = time.Now()
-	}
-
-	// Send request
+	// Send request (includes QUIC handshake + request)
 	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("HTTP/3 request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
-	// Timing: first byte received
+	// Timing: first byte received (after QUIC handshake + request)
 	if timing != nil {
 		timing.firstByte = time.Now()
-		timing.connectDone = timing.firstByte // Approximate
+		timing.dnsDone = timing.firstByte
+		timing.connectDone = timing.firstByte
+		timing.tlsDone = timing.firstByte // QUIC includes TLS 1.3
 		timing.sendDone = timing.firstByte
 	}
 
