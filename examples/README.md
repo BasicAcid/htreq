@@ -204,6 +204,30 @@ Verbose frame inspection with hex dumps:
 
 HTTP/2 uses the same request file format as HTTP/1.1 - htreq handles the protocol conversion automatically.
 
+## HTTP/3
+
+Use HTTP/3 protocol (QUIC over UDP for low latency):
+```bash
+./htreq --http3 -f examples/http3-example.http
+```
+
+HTTP/3 with timing to see QUIC performance:
+```bash
+./htreq --http3 --timing -f examples/http3-example.http
+```
+
+HTTP/3 uses QUIC protocol which provides:
+- **Faster connection establishment** (0-RTT)
+- **Better performance on lossy networks**
+- **Built-in encryption** (TLS 1.3)
+- **Improved multiplexing** (no head-of-line blocking)
+
+Popular services supporting HTTP/3:
+- Google (google.com)
+- Cloudflare (cloudflare.com)
+- Facebook (facebook.com)
+- YouTube, Gmail, Google services
+
 ## WebSocket
 
 Interactive WebSocket connections (public echo service):

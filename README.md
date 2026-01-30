@@ -12,6 +12,7 @@ Send raw HTTP requests over TCP or TLS with complete control.
 
 - **HTTP/1.1** - Full support including chunked encoding
 - **HTTP/2** - With ALPN negotiation and frame inspection
+- **HTTP/3** - QUIC protocol support for modern low-latency connections
 - **WebSocket** - Interactive protocol upgrade and messaging
 - **TLS** - Auto-detection for port 443, certificate inspection
 - **Unix sockets** - Connect to Docker API and other socket services
@@ -146,6 +147,23 @@ Host: cloudflare.com
 htreq --http2 -f http2.http
 ```
 
+### HTTP/3 (QUIC)
+
+**File:** `http3.http`
+```http
+GET / HTTP/1.1
+Host: google.com
+User-Agent: htreq/1.0
+Connection: close
+```
+
+**Command:**
+```bash
+htreq --http3 -f http3.http
+```
+
+HTTP/3 uses QUIC protocol (UDP-based) for improved performance and reduced latency. Most modern services like Google, Cloudflare, and Facebook support HTTP/3.
+
 ### WebSocket
 
 **File:** `websocket.http`
@@ -222,6 +240,7 @@ Options:
   --dump-tls              Show TLS session and certificate info
 
   --http2                 Use HTTP/2 protocol
+  --http3                 Use HTTP/3 protocol (QUIC)
   --websocket, --ws       Use WebSocket protocol
   --dump-frames           Show HTTP/2 frames (requires --http2)
 

@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/quic-go/quic-go/http3"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/hpack"
 	"golang.org/x/term"
@@ -53,6 +54,7 @@ type config struct {
 	noVerify        bool
 	dumpTLS         bool
 	useHTTP2        bool
+	useHTTP3        bool
 	useWebSocket    bool
 	dumpFrames      bool
 	timeout         time.Duration
@@ -70,6 +72,7 @@ type config struct {
 	bodyOnly        bool
 	noColor         bool
 	useColor        bool // Computed: whether to actually use colors
+	noAltSvc        bool
 }
 
 // timingInfo holds detailed timing information for a request
@@ -299,6 +302,7 @@ func parseArgs() *config {
 	flag.BoolVar(&cfg.noVerify, "no-verify", false, "Disable TLS certificate verification")
 	flag.BoolVar(&cfg.dumpTLS, "dump-tls", false, "Display TLS session and certificate info only, then exit")
 	flag.BoolVar(&cfg.useHTTP2, "http2", false, "Use HTTP/2 (requires TLS)")
+	flag.BoolVar(&cfg.useHTTP3, "http3", false, "Use HTTP/3 (QUIC)")
 	flag.BoolVar(&cfg.useWebSocket, "websocket", false, "Upgrade to WebSocket protocol")
 	flag.BoolVar(&cfg.useWebSocket, "ws", false, "Upgrade to WebSocket protocol (alias for --websocket)")
 	flag.BoolVar(&cfg.dumpFrames, "dump-frames", false, "Display HTTP/2 frames (use with --http2)")
@@ -319,6 +323,7 @@ func parseArgs() *config {
 	flag.BoolVar(&cfg.headersOnly, "head", false, "Print only HTTP response headers")
 	flag.BoolVar(&cfg.bodyOnly, "body", false, "Print only HTTP response body")
 	flag.BoolVar(&cfg.noColor, "no-color", false, "Disable colored output")
+	flag.BoolVar(&cfg.noAltSvc, "no-alt-svc", false, "Suppress Alt-Svc protocol upgrade hints")
 
 	// Custom usage message
 	flag.Usage = func() {
@@ -386,6 +391,15 @@ func validateConfig(cfg *config) error {
 	// Validate protocol conflicts
 	if cfg.useWebSocket && cfg.useHTTP2 {
 		return fmt.Errorf("cannot use --websocket and --http2 together")
+	}
+	if cfg.useWebSocket && cfg.useHTTP3 {
+		return fmt.Errorf("cannot use --websocket and --http3 together")
+	}
+	if cfg.useHTTP2 && cfg.useHTTP3 {
+		return fmt.Errorf("cannot use --http2 and --http3 together")
+	}
+	if cfg.unixSocket != "" && cfg.useHTTP3 {
+		return fmt.Errorf("--http3 cannot be used with --unix-socket")
 	}
 
 	return nil
@@ -500,6 +514,11 @@ func run(cfg *config) error {
 	var timing *timingInfo
 	if cfg.showTiming {
 		timing = &timingInfo{}
+	}
+
+	// Use HTTP/3 if requested (handles its own connection via QUIC)
+	if cfg.useHTTP3 {
+		return runHTTP3(request, cfg, timing)
 	}
 
 	// Use WebSocket if requested (handles its own connection)
@@ -728,6 +747,11 @@ func runHTTP1WithResponse(conn net.Conn, request string, cfg *config, timing *ti
 		return nil, err
 	}
 
+	// Print Alt-Svc hint if present
+	if altSvc := extractAltSvc(respInfo.headers); altSvc != "" {
+		printAltSvcHint(altSvc, cfg)
+	}
+
 	return respInfo, nil
 }
 
@@ -920,6 +944,42 @@ func extractLocation(headers string) string {
 	return ""
 }
 
+// extractAltSvc extracts Alt-Svc header value from response headers
+func extractAltSvc(headers string) string {
+	lines := strings.Split(headers, "\r\n")
+	for _, line := range lines {
+		lower := strings.ToLower(line)
+		if strings.HasPrefix(lower, "alt-svc:") {
+			parts := strings.SplitN(line, ":", 2)
+			if len(parts) == 2 {
+				return strings.TrimSpace(parts[1])
+			}
+		}
+	}
+	return ""
+}
+
+// printAltSvcHint prints helpful information about Alt-Svc if present
+func printAltSvcHint(altSvc string, cfg *config) {
+	if altSvc == "" || cfg.noAltSvc || cfg.quiet {
+		return
+	}
+
+	// Parse Alt-Svc value to provide helpful hints
+	// Format: h3=":443"; ma=2592000
+	if strings.Contains(altSvc, "h3=") {
+		fmt.Fprintf(os.Stderr, "[i] Server advertises HTTP/3 support via Alt-Svc\n")
+		if !cfg.useHTTP3 {
+			fmt.Fprintf(os.Stderr, "[i] Tip: Use --http3 flag for faster HTTP/3 connection\n")
+		}
+	} else if strings.Contains(altSvc, "h2=") {
+		fmt.Fprintf(os.Stderr, "[i] Server advertises HTTP/2 support via Alt-Svc\n")
+		if !cfg.useHTTP2 {
+			fmt.Fprintf(os.Stderr, "[i] Tip: Use --http2 flag for HTTP/2 connection\n")
+		}
+	}
+}
+
 // prefixConn wraps a net.Conn to prepend bytes that were already read
 type prefixConn struct {
 	net.Conn
@@ -1056,6 +1116,13 @@ func extractPort(target string) string {
 		return target[idx+1:]
 	}
 	return ""
+}
+
+func splitHostPort(target string) (host, port string) {
+	if idx := strings.LastIndex(target, ":"); idx != -1 {
+		return target[:idx], target[idx+1:]
+	}
+	return target, ""
 }
 
 func loadEnvFile(path string) error {
@@ -1282,6 +1349,11 @@ func readResponse(conn net.Conn, cfg *config) error {
 				bytesWritten += int64(len(toWrite))
 			}
 
+			// Check for Alt-Svc hints
+			if altSvc := extractAltSvc(string(headers)); altSvc != "" {
+				printAltSvcHint(altSvc, cfg)
+			}
+
 			// If headers-only, we're done
 			if cfg.headersOnly {
 				return nil
@@ -1502,6 +1574,169 @@ func tlsVersionString(version uint16) string {
 	default:
 		return fmt.Sprintf("Unknown (0x%04x)", version)
 	}
+}
+
+// HTTP/3 implementation
+
+func runHTTP3(request string, cfg *config, timing *timingInfo) error {
+	// Parse the HTTP request into method, path, headers, body
+	method, path, headers, body, err := parseHTTPRequest(request)
+	if err != nil {
+		return err
+	}
+
+	// Get host from config
+	host, port := splitHostPort(cfg.target)
+	if port == "" {
+		port = "443" // Default HTTP/3 port
+	}
+
+	// Build full URL
+	url := fmt.Sprintf("https://%s:%s%s", host, port, path)
+
+	// Print request if requested
+	if cfg.printRequest && !cfg.quiet {
+		fmt.Fprintf(os.Stderr, "[*] Sending HTTP/3 request:\n")
+		fmt.Fprintf(os.Stderr, "%s\n", strings.Repeat("-", 40))
+		fmt.Fprintf(os.Stderr, "%s %s\n", method, url)
+		for k, v := range headers {
+			fmt.Fprintf(os.Stderr, "%s: %s\n", k, v)
+		}
+		if body != "" {
+			fmt.Fprintf(os.Stderr, "\n%s", body)
+		}
+		fmt.Fprintf(os.Stderr, "%s\n", strings.Repeat("-", 40))
+	}
+
+	// Create HTTP/3 transport
+	transport := &http3.Transport{
+		TLSClientConfig: &tls.Config{
+			InsecureSkipVerify: cfg.noVerify,
+			ServerName:         host,
+		},
+	}
+	defer transport.Close()
+
+	// Create HTTP client
+	client := &http.Client{
+		Transport: transport,
+		Timeout:   cfg.timeout,
+	}
+
+	// Create HTTP request
+	var reqBody io.Reader
+	if body != "" {
+		reqBody = strings.NewReader(body)
+	}
+
+	req, err := http.NewRequest(method, url, reqBody)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Add headers
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+
+	// Timing: connection and request start (HTTP/3 combines these)
+	if timing != nil {
+		timing.dnsStart = time.Now()
+		timing.connectStart = timing.dnsStart
+		timing.sendStart = timing.dnsStart
+	}
+
+	if !cfg.quiet {
+		fmt.Fprintf(os.Stderr, "[*] Connecting to %s:%s (HTTP/3/QUIC)\n", host, port)
+	}
+
+	// Send request (includes QUIC handshake + request)
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("HTTP/3 request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Timing: first byte received (after QUIC handshake + request)
+	if timing != nil {
+		timing.firstByte = time.Now()
+		timing.dnsDone = timing.firstByte
+		timing.connectDone = timing.firstByte
+		timing.tlsDone = timing.firstByte // QUIC includes TLS 1.3
+		timing.sendDone = timing.firstByte
+	}
+
+	// Output response
+	output := os.Stdout
+
+	// Print status line
+	if !cfg.bodyOnly {
+		protocol := cfg.colorize(colorGray, "HTTP/3")
+		status := fmt.Sprintf("%d %s", resp.StatusCode, http.StatusText(resp.StatusCode))
+		coloredStatus := cfg.colorStatus(status)
+		if _, err := fmt.Fprintf(output, "%s %s\r\n", protocol, coloredStatus); err != nil {
+			return err
+		}
+
+		// Print headers
+		for k, values := range resp.Header {
+			for _, v := range values {
+				headerName := cfg.colorize(colorCyan, k)
+				if _, err := fmt.Fprintf(output, "%s: %s\r\n", headerName, v); err != nil {
+					return err
+				}
+			}
+		}
+		if _, err := fmt.Fprintf(output, "\r\n"); err != nil {
+			return err
+		}
+	}
+
+	// Print body if not headers-only
+	if !cfg.headersOnly {
+		var bytesWritten int64
+		buf := make([]byte, defaultBufferSize)
+		for {
+			if cfg.maxBytes > 0 && bytesWritten >= cfg.maxBytes {
+				break
+			}
+
+			n, err := resp.Body.Read(buf)
+			if n > 0 {
+				toWrite := n
+				if cfg.maxBytes > 0 && bytesWritten+int64(n) > cfg.maxBytes {
+					toWrite = int(cfg.maxBytes - bytesWritten)
+				}
+				if _, writeErr := output.Write(buf[:toWrite]); writeErr != nil {
+					return writeErr
+				}
+				bytesWritten += int64(toWrite)
+			}
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				return fmt.Errorf("failed to read response body: %w", err)
+			}
+		}
+	}
+
+	// Timing: response done
+	if timing != nil {
+		timing.responseDone = time.Now()
+	}
+
+	// Check for Alt-Svc hints (e.g., server might advertise HTTP/2 fallback)
+	if altSvc := resp.Header.Get("Alt-Svc"); altSvc != "" {
+		printAltSvcHint(altSvc, cfg)
+	}
+
+	// Print timing if requested
+	if timing != nil && !cfg.quiet {
+		fmt.Fprintf(os.Stderr, "%s\n", timing.durations())
+	}
+
+	return nil
 }
 
 // HTTP/2 implementation
@@ -1816,6 +2051,11 @@ func readHTTP2Response(framer *http2.Framer, cfg *config, timing *timingInfo) er
 		case *http2.RSTStreamFrame:
 			return fmt.Errorf("stream reset by server: %v", f.ErrCode)
 		}
+	}
+
+	// Check for Alt-Svc hints
+	if altSvc, ok := responseHeaders["alt-svc"]; ok && altSvc != "" {
+		printAltSvcHint(altSvc, cfg)
 	}
 
 	return nil
