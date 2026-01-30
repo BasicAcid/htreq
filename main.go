@@ -72,6 +72,7 @@ type config struct {
 	bodyOnly        bool
 	noColor         bool
 	useColor        bool // Computed: whether to actually use colors
+	noAltSvc        bool
 }
 
 // timingInfo holds detailed timing information for a request
@@ -322,6 +323,7 @@ func parseArgs() *config {
 	flag.BoolVar(&cfg.headersOnly, "head", false, "Print only HTTP response headers")
 	flag.BoolVar(&cfg.bodyOnly, "body", false, "Print only HTTP response body")
 	flag.BoolVar(&cfg.noColor, "no-color", false, "Disable colored output")
+	flag.BoolVar(&cfg.noAltSvc, "no-alt-svc", false, "Suppress Alt-Svc protocol upgrade hints")
 
 	// Custom usage message
 	flag.Usage = func() {
@@ -745,6 +747,11 @@ func runHTTP1WithResponse(conn net.Conn, request string, cfg *config, timing *ti
 		return nil, err
 	}
 
+	// Print Alt-Svc hint if present
+	if altSvc := extractAltSvc(respInfo.headers); altSvc != "" {
+		printAltSvcHint(altSvc, cfg)
+	}
+
 	return respInfo, nil
 }
 
@@ -935,6 +942,42 @@ func extractLocation(headers string) string {
 		}
 	}
 	return ""
+}
+
+// extractAltSvc extracts Alt-Svc header value from response headers
+func extractAltSvc(headers string) string {
+	lines := strings.Split(headers, "\r\n")
+	for _, line := range lines {
+		lower := strings.ToLower(line)
+		if strings.HasPrefix(lower, "alt-svc:") {
+			parts := strings.SplitN(line, ":", 2)
+			if len(parts) == 2 {
+				return strings.TrimSpace(parts[1])
+			}
+		}
+	}
+	return ""
+}
+
+// printAltSvcHint prints helpful information about Alt-Svc if present
+func printAltSvcHint(altSvc string, cfg *config) {
+	if altSvc == "" || cfg.noAltSvc || cfg.quiet {
+		return
+	}
+
+	// Parse Alt-Svc value to provide helpful hints
+	// Format: h3=":443"; ma=2592000
+	if strings.Contains(altSvc, "h3=") {
+		fmt.Fprintf(os.Stderr, "[i] Server advertises HTTP/3 support via Alt-Svc\n")
+		if !cfg.useHTTP3 {
+			fmt.Fprintf(os.Stderr, "[i] Tip: Use --http3 flag for faster HTTP/3 connection\n")
+		}
+	} else if strings.Contains(altSvc, "h2=") {
+		fmt.Fprintf(os.Stderr, "[i] Server advertises HTTP/2 support via Alt-Svc\n")
+		if !cfg.useHTTP2 {
+			fmt.Fprintf(os.Stderr, "[i] Tip: Use --http2 flag for HTTP/2 connection\n")
+		}
+	}
 }
 
 // prefixConn wraps a net.Conn to prepend bytes that were already read
@@ -1304,6 +1347,11 @@ func readResponse(conn net.Conn, cfg *config) error {
 					return err
 				}
 				bytesWritten += int64(len(toWrite))
+			}
+
+			// Check for Alt-Svc hints
+			if altSvc := extractAltSvc(string(headers)); altSvc != "" {
+				printAltSvcHint(altSvc, cfg)
 			}
 
 			// If headers-only, we're done
@@ -1679,6 +1727,11 @@ func runHTTP3(request string, cfg *config, timing *timingInfo) error {
 		timing.responseDone = time.Now()
 	}
 
+	// Check for Alt-Svc hints (e.g., server might advertise HTTP/2 fallback)
+	if altSvc := resp.Header.Get("Alt-Svc"); altSvc != "" {
+		printAltSvcHint(altSvc, cfg)
+	}
+
 	// Print timing if requested
 	if timing != nil && !cfg.quiet {
 		fmt.Fprintf(os.Stderr, "%s\n", timing.durations())
@@ -1999,6 +2052,11 @@ func readHTTP2Response(framer *http2.Framer, cfg *config, timing *timingInfo) er
 		case *http2.RSTStreamFrame:
 			return fmt.Errorf("stream reset by server: %v", f.ErrCode)
 		}
+	}
+
+	// Check for Alt-Svc hints
+	if altSvc, ok := responseHeaders["alt-svc"]; ok && altSvc != "" {
+		printAltSvcHint(altSvc, cfg)
 	}
 
 	return nil
