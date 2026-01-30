@@ -12,7 +12,7 @@ htreq provides seamless integration with Emacs org-mode through ~ob-htreq.el~, a
 
 #+begin_src elisp
 (use-package ob-htreq
-  :straight (:host github :repo "BasicAcid/htreq")
+  :straight (:host github :repo "BasicAcid/htreq" :files ("emacs/*.el"))
   :after org
   :config
   (org-babel-do-load-languages
