@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/pem"
 	"flag"
@@ -64,6 +65,7 @@ type config struct {
 	retryDelay      time.Duration
 	followRedirects bool
 	maxRedirects    int
+	basicAuth       string
 	headersOnly     bool
 	bodyOnly        bool
 	noColor         bool
@@ -307,6 +309,7 @@ func parseArgs() *config {
 	flag.BoolVar(&cfg.followRedirects, "follow", false, "Follow HTTP redirects (3xx)")
 	flag.BoolVar(&cfg.followRedirects, "L", false, "Follow HTTP redirects (alias for --follow)")
 	flag.IntVar(&cfg.maxRedirects, "max-redirects", 10, "Maximum number of redirects to follow")
+	flag.StringVar(&cfg.basicAuth, "user", "", "Basic auth credentials (username:password)")
 	flag.BoolVar(&cfg.printRequest, "print-request", false, "Print the request being sent to stderr")
 	flag.BoolVar(&cfg.quiet, "q", false, "Suppress stderr messages")
 	flag.BoolVar(&cfg.quiet, "quiet", false, "Suppress stderr messages")
@@ -457,6 +460,23 @@ func run(cfg *config) error {
 	request, err := readRequest(cfg)
 	if err != nil {
 		return err
+	}
+
+	// Process Basic Auth if specified
+	if cfg.basicAuth != "" {
+		// Parse and encode credentials
+		encodedCreds, err := parseBasicAuth(cfg.basicAuth)
+		if err != nil {
+			return err
+		}
+
+		// Warn if using Basic Auth without TLS
+		if !cfg.useTLS && !cfg.quiet {
+			fmt.Fprintf(os.Stderr, "[!] Warning: Using --user without TLS (credentials sent in plain text)\n")
+		}
+
+		// Inject Authorization header
+		request = injectBasicAuthHeader(request, encodedCreds)
 	}
 
 	// If no target specified and not using unix socket, extract from Host header
@@ -1154,6 +1174,45 @@ func expandEnvVars(data string) string {
 		}
 		return match
 	})
+}
+
+// parseBasicAuth parses "username:password" and returns base64-encoded credentials
+func parseBasicAuth(userPass string) (string, error) {
+	if userPass == "" {
+		return "", nil
+	}
+
+	// Validate format
+	if !strings.Contains(userPass, ":") {
+		return "", fmt.Errorf("invalid --user format: expected 'username:password'")
+	}
+
+	// Base64 encode the credentials
+	encoded := base64.StdEncoding.EncodeToString([]byte(userPass))
+	return encoded, nil
+}
+
+// injectBasicAuthHeader adds Authorization header to the request
+func injectBasicAuthHeader(request, encodedCreds string) string {
+	if encodedCreds == "" {
+		return request
+	}
+
+	// Split request into lines
+	lines := strings.Split(request, "\r\n")
+	if len(lines) == 0 {
+		return request
+	}
+
+	// Find the end of the first line (request line)
+	// Insert Authorization header after the request line
+	authHeader := fmt.Sprintf("Authorization: Basic %s", encodedCreds)
+
+	// Insert after first line
+	result := []string{lines[0], authHeader}
+	result = append(result, lines[1:]...)
+
+	return strings.Join(result, "\r\n")
 }
 
 func checkContentLength(headers, body string) {

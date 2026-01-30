@@ -305,6 +305,37 @@ run_test \
     "HTTP/1.1 302"
 
 # ============================================================================
+# Basic Auth Tests
+# ============================================================================
+print_test_header "Basic Authentication Tests"
+
+run_test \
+    "--user flag with correct credentials" \
+    "$BINARY -f $FIXTURES_DIR/basic-auth.http --user testuser:testpass --body 2>/dev/null" \
+    '"authenticated": true'
+
+run_test \
+    "--user flag with wrong credentials returns 401" \
+    "$BINARY -f $FIXTURES_DIR/basic-auth.http --user wronguser:wrongpass 2>&1" \
+    "401 UNAUTHORIZED"
+
+run_test \
+    "--user flag without TLS shows warning" \
+    "$BINARY -f $FIXTURES_DIR/get-http.http --user test:pass --no-tls 2>&1" \
+    "Warning: Using --user without TLS"
+
+run_test \
+    "--user flag with invalid format shows error" \
+    "$BINARY -f $FIXTURES_DIR/basic-auth.http --user invalid-format 2>&1" \
+    "invalid --user format" \
+    "true"
+
+run_test \
+    "--user flag injects Authorization header" \
+    "$BINARY -f $FIXTURES_DIR/basic-auth.http --user testuser:testpass --print-request 2>&1" \
+    "Authorization: Basic"
+
+# ============================================================================
 # Test Summary
 # ============================================================================
 echo ""

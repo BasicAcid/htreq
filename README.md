@@ -15,10 +15,12 @@ Send raw HTTP requests over TCP or TLS with complete control.
 - **WebSocket** - Interactive protocol upgrade and messaging
 - **TLS** - Auto-detection for port 443, certificate inspection
 - **Unix sockets** - Connect to Docker API and other socket services
+- **Basic authentication** - Automatic header generation with `--user`
 - **Environment variables** - Expand `$VAR` in request files
 - **Colored output** - Syntax highlighting (auto-disabled when piped)
 - **Request timing** - Detailed breakdown of connection phases
 - **Automatic retries** - Configurable retry logic for transient failures
+- **Redirect following** - Automatic HTTP redirect handling with `--follow`
 
 ## Installation
 
@@ -112,6 +114,24 @@ Accept: application/json
 ```bash
 htreq --env-file .env -f api.http
 ```
+
+### Basic Authentication
+
+**File:** `auth.http`
+```http
+GET /basic-auth/myuser/mypass HTTP/1.1
+Host: httpbin.org
+Connection: close
+```
+
+**Command:**
+```bash
+htreq -f auth.http --user myuser:mypass
+```
+
+The `--user` flag automatically generates the `Authorization: Basic` header with base64-encoded credentials. 
+
+**Warning:** Basic auth should only be used over TLS/HTTPS to avoid sending credentials in plain text.
 
 ### HTTP/2
 
@@ -207,9 +227,12 @@ Options:
 
   --retry N               Number of retries on failure (default: 0)
   --retry-delay DURATION  Delay between retries (default: 1s)
+  --follow, -L            Follow HTTP redirects
+  --max-redirects N       Maximum redirects to follow (default: 10)
   --timeout DURATION      Socket timeout (default: 10s)
   --max-bytes N           Limit response output to N bytes
 
+  --user USER:PASS        Basic authentication credentials
   --print-request         Show request being sent
   --timing                Show detailed request/response timing
   --head                  Show only response headers

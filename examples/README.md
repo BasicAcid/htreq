@@ -88,6 +88,26 @@ Force plain TCP on port 443:
 ./htreq example.com:443 --no-tls -f examples/get-https.http
 ```
 
+## Basic Authentication
+
+HTTP Basic Authentication with automatic header generation:
+```bash
+./htreq -f examples/basic-auth.http --user myuser:mypass
+```
+
+The `--user` flag automatically generates the `Authorization: Basic` header with base64-encoded credentials.
+
+**Security Warning:** Basic authentication should only be used over HTTPS/TLS. htreq will warn you if you use `--user` without TLS:
+```bash
+# This will show a warning about plain text credentials
+./htreq some-host.com:80 -f request.http --user myuser:mypass --no-tls
+```
+
+You can verify the header is being injected correctly:
+```bash
+./htreq -f examples/basic-auth.http --user myuser:mypass --print-request
+```
+
 ## Environment Variables
 
 Create a `.env` file and use it with requests:
