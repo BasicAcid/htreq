@@ -289,6 +289,21 @@ run_test \
     "$BINARY -f $FIXTURES_DIR/get-https.http --retry 2" \
     "HTTP/1.1 200"
 
+run_test \
+    "--follow flag follows redirects" \
+    "$BINARY -f $FIXTURES_DIR/redirect.http --follow 2>&1" \
+    "Following redirect"
+
+run_test \
+    "--follow flag ends at final destination" \
+    "$BINARY -f $FIXTURES_DIR/redirect.http --follow --body 2>/dev/null" \
+    '"url"'
+
+run_test \
+    "Without --follow stops at first redirect" \
+    "$BINARY -f $FIXTURES_DIR/redirect.http" \
+    "HTTP/1.1 302"
+
 # ============================================================================
 # Test Summary
 # ============================================================================

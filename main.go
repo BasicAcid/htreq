@@ -42,30 +42,32 @@ const (
 )
 
 type config struct {
-	target       string
-	file         string
-	unixSocket   string
-	env          bool
-	envFile      string
-	useTLS       bool
-	noTLS        bool
-	noVerify     bool
-	dumpTLS      bool
-	useHTTP2     bool
-	useWebSocket bool
-	dumpFrames   bool
-	timeout      time.Duration
-	maxBytes     int64
-	printRequest bool
-	quiet        bool
-	verbose      bool
-	showTiming   bool
-	retryCount   int
-	retryDelay   time.Duration
-	headersOnly  bool
-	bodyOnly     bool
-	noColor      bool
-	useColor     bool // Computed: whether to actually use colors
+	target          string
+	file            string
+	unixSocket      string
+	env             bool
+	envFile         string
+	useTLS          bool
+	noTLS           bool
+	noVerify        bool
+	dumpTLS         bool
+	useHTTP2        bool
+	useWebSocket    bool
+	dumpFrames      bool
+	timeout         time.Duration
+	maxBytes        int64
+	printRequest    bool
+	quiet           bool
+	verbose         bool
+	showTiming      bool
+	retryCount      int
+	retryDelay      time.Duration
+	followRedirects bool
+	maxRedirects    int
+	headersOnly     bool
+	bodyOnly        bool
+	noColor         bool
+	useColor        bool // Computed: whether to actually use colors
 }
 
 // timingInfo holds detailed timing information for a request
@@ -80,6 +82,13 @@ type timingInfo struct {
 	sendDone     time.Time
 	firstByte    time.Time
 	responseDone time.Time
+}
+
+// responseInfo holds information about an HTTP response for redirect handling
+type responseInfo struct {
+	statusCode int
+	location   string
+	headers    string
 }
 
 // durations returns the timing breakdown as a formatted string
@@ -295,6 +304,9 @@ func parseArgs() *config {
 	flag.Int64Var(&cfg.maxBytes, "max-bytes", 0, "Limit response output to N bytes")
 	flag.IntVar(&cfg.retryCount, "retry", 0, "Number of retries on failure (0 = no retries)")
 	flag.DurationVar(&cfg.retryDelay, "retry-delay", 1*time.Second, "Delay between retries")
+	flag.BoolVar(&cfg.followRedirects, "follow", false, "Follow HTTP redirects (3xx)")
+	flag.BoolVar(&cfg.followRedirects, "L", false, "Follow HTTP redirects (alias for --follow)")
+	flag.IntVar(&cfg.maxRedirects, "max-redirects", 10, "Maximum number of redirects to follow")
 	flag.BoolVar(&cfg.printRequest, "print-request", false, "Print the request being sent to stderr")
 	flag.BoolVar(&cfg.quiet, "q", false, "Suppress stderr messages")
 	flag.BoolVar(&cfg.quiet, "quiet", false, "Suppress stderr messages")
@@ -496,7 +508,87 @@ func run(cfg *config) error {
 	}
 
 	// HTTP/1.1 mode
+	if cfg.followRedirects {
+		return runHTTP1WithRedirects(conn, request, cfg, timing)
+	}
 	return runHTTP1(conn, request, cfg, timing)
+}
+
+// runHTTP1WithRedirects handles HTTP/1.1 with automatic redirect following
+func runHTTP1WithRedirects(conn net.Conn, initialRequest string, cfg *config, timing *timingInfo) error {
+	request := initialRequest
+	redirectCount := 0
+	visited := make(map[string]bool) // Track visited URLs to detect loops
+
+	for {
+		// Send request and get response info
+		respInfo, err := runHTTP1WithResponse(conn, request, cfg, timing)
+		if err != nil {
+			return err
+		}
+
+		// Check if this is a redirect status
+		if respInfo.statusCode < 300 || respInfo.statusCode >= 400 {
+			// Not a redirect, we're done
+			return nil
+		}
+
+		// Check if we have a Location header
+		if respInfo.location == "" {
+			if !cfg.quiet {
+				fmt.Fprintf(os.Stderr, "[!] Warning: Got %d redirect but no Location header\n", respInfo.statusCode)
+			}
+			return nil
+		}
+
+		// Check redirect limit
+		if redirectCount >= cfg.maxRedirects {
+			return fmt.Errorf("too many redirects (limit: %d)", cfg.maxRedirects)
+		}
+
+		// Check for redirect loop
+		if visited[respInfo.location] {
+			return fmt.Errorf("redirect loop detected: %s", respInfo.location)
+		}
+		visited[respInfo.location] = true
+
+		redirectCount++
+
+		if !cfg.quiet {
+			fmt.Fprintf(os.Stderr, "[*] Following redirect %d/%d to: %s\n", redirectCount, cfg.maxRedirects, respInfo.location)
+		}
+
+		// Parse the redirect location
+		newTarget, newPath, err := parseRedirectLocation(respInfo.location, cfg.target)
+		if err != nil {
+			return fmt.Errorf("invalid redirect location: %w", err)
+		}
+
+		// Close current connection if target changed
+		if newTarget != cfg.target {
+			conn.Close()
+
+			// Update target
+			cfg.target = newTarget
+
+			// Reconnect to new target
+			conn, err = connect(cfg, nil) // Don't track timing for redirects
+			if err != nil {
+				return err
+			}
+			defer func() {
+				if err := conn.Close(); err != nil && !cfg.quiet {
+					fmt.Fprintf(os.Stderr, "[!] Warning: failed to close connection: %v\n", err)
+				}
+			}()
+		}
+
+		// Build new request with updated path
+		request, err = updateRequestPath(initialRequest, newPath, newTarget)
+		if err != nil {
+			return fmt.Errorf("failed to update request: %w", err)
+		}
+	}
 }
 
 // runHTTP1 handles HTTP/1.1 request/response with detailed timing
@@ -558,6 +650,254 @@ func runHTTP1(conn net.Conn, request string, cfg *config, timing *timingInfo) er
 	}
 
 	return err
+}
+
+// runHTTP1WithResponse is like runHTTP1 but returns response info for redirect handling
+func runHTTP1WithResponse(conn net.Conn, request string, cfg *config, timing *timingInfo) (*responseInfo, error) {
+	// Print request if requested
+	if cfg.printRequest && !cfg.quiet {
+		fmt.Fprintf(os.Stderr, "[*] Sending request:\n")
+		fmt.Fprintf(os.Stderr, "%s\n", strings.Repeat("-", 40))
+		fmt.Fprintf(os.Stderr, "%s", request)
+		fmt.Fprintf(os.Stderr, "%s\n", strings.Repeat("-", 40))
+	}
+
+	// Timing: request send start
+	if timing != nil {
+		timing.sendStart = time.Now()
+	}
+
+	// Send request
+	if _, err := conn.Write([]byte(request)); err != nil {
+		return nil, fmt.Errorf("send failed: %w", err)
+	}
+
+	// Timing: request send done
+	if timing != nil {
+		timing.sendDone = time.Now()
+	}
+
+	// Read first byte to capture TTFB timing
+	if timing != nil {
+		buf := make([]byte, 1)
+		conn.SetReadDeadline(time.Now().Add(cfg.timeout))
+		n, err := conn.Read(buf)
+		if err != nil {
+			return nil, fmt.Errorf("read failed: %w", err)
+		}
+		if n > 0 {
+			timing.firstByte = time.Now()
+
+			// Push the byte back by creating a wrapped connection
+			conn = &prefixConn{
+				Conn:   conn,
+				prefix: buf[:n],
+			}
+		}
+	}
+
+	// Read and process response, capturing response info
+	respInfo, err := readResponseWithInfo(conn, cfg)
+
+	// Mark response completion
+	if timing != nil {
+		timing.responseDone = time.Now()
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	return respInfo, nil
+}
+
+// parseRedirectLocation parses a redirect location and returns new target and path
+func parseRedirectLocation(location, currentTarget string) (newTarget, newPath string, err error) {
+	// Handle relative URLs
+	if !strings.HasPrefix(location, "http://") && !strings.HasPrefix(location, "https://") {
+		// Relative URL - keep same target
+		newTarget = currentTarget
+		if strings.HasPrefix(location, "/") {
+			newPath = location
+		} else {
+			newPath = "/" + location
+		}
+		return newTarget, newPath, nil
+	}
+
+	// Parse absolute URL
+	// Remove scheme
+	schemeEnd := strings.Index(location, "://")
+	if schemeEnd == -1 {
+		return "", "", fmt.Errorf("invalid URL: %s", location)
+	}
+
+	remainder := location[schemeEnd+3:]
+
+	// Find path separator
+	pathStart := strings.Index(remainder, "/")
+	if pathStart == -1 {
+		// No path, just host
+		newTarget = remainder
+		newPath = "/"
+	} else {
+		newTarget = remainder[:pathStart]
+		newPath = remainder[pathStart:]
+	}
+
+	return newTarget, newPath, nil
+}
+
+// updateRequestPath updates the request with a new path and host
+func updateRequestPath(originalRequest, newPath, newHost string) (string, error) {
+	lines := strings.Split(originalRequest, "\r\n")
+	if len(lines) == 0 {
+		return "", fmt.Errorf("empty request")
+	}
+
+	// Update request line
+	parts := strings.Fields(lines[0])
+	if len(parts) < 3 {
+		return "", fmt.Errorf("invalid request line")
+	}
+
+	// Build new request line
+	lines[0] = parts[0] + " " + newPath + " " + parts[2]
+
+	// Update Host header
+	for i := 1; i < len(lines); i++ {
+		if strings.HasPrefix(strings.ToLower(lines[i]), "host:") {
+			lines[i] = "Host: " + newHost
+			break
+		}
+	}
+
+	return strings.Join(lines, "\r\n"), nil
+}
+
+// readResponseWithInfo reads response and extracts status code and Location header
+func readResponseWithInfo(conn net.Conn, cfg *config) (*responseInfo, error) {
+	output := os.Stdout
+	reader := bufio.NewReader(conn)
+	buffer := &bytes.Buffer{}
+	headerEnded := false
+	var contentLength *int64
+	chunked := false
+	var bytesWritten int64
+
+	respInfo := &responseInfo{}
+
+	// Set read deadline for the entire response
+	if err := conn.SetReadDeadline(time.Now().Add(cfg.timeout)); err != nil {
+		return nil, fmt.Errorf("failed to set read deadline: %w", err)
+	}
+
+	// Read until we find the end of headers
+	for !headerEnded {
+		chunk := make([]byte, defaultBufferSize)
+		n, err := reader.Read(chunk)
+		if n > 0 {
+			buffer.Write(chunk[:n])
+		}
+		if err != nil {
+			if err == io.EOF && buffer.Len() > 0 {
+				break
+			}
+			return nil, err
+		}
+
+		// Check for end of headers
+		if idx := bytes.Index(buffer.Bytes(), []byte("\r\n\r\n")); idx != -1 {
+			headerEnded = true
+			headers := buffer.Bytes()[:idx+4]
+			body := buffer.Bytes()[idx+4:]
+
+			// Parse status code and Location
+			respInfo.headers = string(headers)
+			respInfo.statusCode = extractStatusCode(respInfo.headers)
+			respInfo.location = extractLocation(respInfo.headers)
+
+			// Parse headers for body handling
+			contentLength, chunked = parseHeaders(string(headers))
+
+			// Write headers if needed
+			if !cfg.bodyOnly {
+				toWrite := cfg.colorizeHTTPResponse(headers)
+				if cfg.maxBytes > 0 && bytesWritten+int64(len(toWrite)) > cfg.maxBytes {
+					toWrite = toWrite[:cfg.maxBytes-bytesWritten]
+				}
+				if _, err := output.Write(toWrite); err != nil {
+					return nil, err
+				}
+				bytesWritten += int64(len(toWrite))
+			}
+
+			// If headers-only, we're done
+			if cfg.headersOnly {
+				return respInfo, nil
+			}
+
+			// Reset buffer with body
+			buffer.Reset()
+			buffer.Write(body)
+			break
+		}
+	}
+
+	if !headerEnded {
+		// No body, just write what we have
+		if !cfg.bodyOnly {
+			if _, err := output.Write(buffer.Bytes()); err != nil {
+				return nil, err
+			}
+		}
+		return respInfo, nil
+	}
+
+	// Handle body based on transfer encoding
+	var err error
+	if chunked {
+		err = readChunkedBody(reader, buffer, output, cfg, &bytesWritten)
+	} else {
+		err = readRegularBody(reader, buffer, output, cfg, contentLength, &bytesWritten)
+	}
+
+	return respInfo, err
+}
+
+// extractStatusCode extracts the HTTP status code from response headers
+func extractStatusCode(headers string) int {
+	lines := strings.Split(headers, "\r\n")
+	if len(lines) == 0 {
+		return 0
+	}
+
+	// Parse status line: "HTTP/1.1 200 OK"
+	parts := strings.Fields(lines[0])
+	if len(parts) < 2 {
+		return 0
+	}
+
+	code, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return 0
+	}
+
+	return code
+}
+
+// extractLocation extracts the Location header from response headers
+func extractLocation(headers string) string {
+	lines := strings.Split(headers, "\r\n")
+	for _, line := range lines {
+		if strings.HasPrefix(strings.ToLower(line), "location:") {
+			parts := strings.SplitN(line, ":", 2)
+			if len(parts) == 2 {
+				return strings.TrimSpace(parts[1])
+			}
+		}
+	}
+	return ""
 }
 
 // prefixConn wraps a net.Conn to prepend bytes that were already read
