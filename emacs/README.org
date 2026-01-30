@@ -56,7 +56,6 @@ Access-Control-Allow-Credentials: true
     <link href="https://fonts.googleapis.com/css?family=Open+Sans:400,700|Source+Code+Pro:300,600|Titillium+Web:400,600,700"
         rel="stylesheet">
     <link r
-[*] Response received in 99ms
 #+end_example
 
 2. Place cursor inside the block and press ~C-c C-c~ to execute
@@ -94,8 +93,6 @@ Host: httpbin.org
     "title": "Sample Slide Show"
   }
 }
-
-[*] Response received in 204ms
 #+end_example
 
 * Header Arguments
@@ -161,8 +158,6 @@ Server: gunicorn/19.9.0
 Access-Control-Allow-Origin: *
 Access-Control-Allow-Credentials: true
 
-
-[*] Response received in 94ms
 #+end_example
 
 *** HTTP/2 with frame inspection
@@ -200,7 +195,8 @@ Set-Cookie: __Secure-BUCKET=CCo; expires=Sun, 26-Jul-2026 14:23:55 GMT; path=/; 
 Vary: Accept-Encoding
 
 <!doctype html><html itemscope="" itemtype="http://schema.org/WebPage" lang="fr"><head><meta content="text/html; charset=UTF-8" http-equiv="Content-Type"><meta content="/images/branding/googleg/1x/googleg_standard_color_128dp.png" itemprop="image"><title>Google</title><script nonce="45HYjfafIZKyo-y0Yi_ATw">(function(){var _g={kEI:'e8p4afOyHJ-lqtsPov3t4AM',kEXPI:'0,203005,1101198,2900998,34844,14112,64701,217969,142932,226411,20908,5285475,113,23,6,5991831,30819601,25228681,78017,74369,65162,3977
-[*] Response received in 208ms
+
+[*] Response received
 #+end_example
 
 *** HTTP/3 with QUIC
@@ -308,7 +304,6 @@ Host: httpbin.org
         html {
             box-sizing: border-box;
 
-[*] Response received in 373ms
 #+end_example
 
 * Variable Substitution
@@ -344,8 +339,6 @@ Access-Control-Allow-Credentials: true
   "origin": "77.158.80.50",
   "url": "https://httpbin.org/get"
 }
-
-[*] Response received in 129ms
 #+end_example
 
 ** API Tokens
@@ -373,8 +366,6 @@ Access-Control-Allow-Credentials: true
   "authenticated": true,
   "token": "my-secret-token"
 }
-
-[*] Response received in 263ms
 #+end_example
 
 ** Multiple Variables
@@ -390,8 +381,6 @@ Accept: application/vnd.github.v3+json
 : [*] Connecting to api.github.com:443 (TLS)
 :
 : Request forbidden by administrative rules. Please make sure your request has a User-Agent header (https://docs.github.com/en/rest/overview/resources-in-the-rest-api#user-agent-required). Check https://developer.github.com for other possible causes.
-:
-: [*] Response received in 21ms
 
 ** Variable Formats
 
