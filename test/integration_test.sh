@@ -208,6 +208,21 @@ run_test \
     "SETTINGS"
 
 # ============================================================================
+# HTTP/3 Support
+# ============================================================================
+print_test_header "HTTP/3 Support"
+
+run_test \
+    "HTTP/3 request to google.com" \
+    "$BINARY --http3 -f $FIXTURES_DIR/get-http3.http" \
+    "HTTP/3"
+
+run_test \
+    "HTTP/3 with --timing" \
+    "$BINARY --http3 --timing -f $FIXTURES_DIR/get-http3.http 2>&1" \
+    "HTTP/3/QUIC"
+
+# ============================================================================
 # Error Cases
 # ============================================================================
 print_test_header "Error Handling"

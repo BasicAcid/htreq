@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/quic-go/quic-go/http3"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/hpack"
 	"golang.org/x/term"
@@ -53,6 +54,7 @@ type config struct {
 	noVerify        bool
 	dumpTLS         bool
 	useHTTP2        bool
+	useHTTP3        bool
 	useWebSocket    bool
 	dumpFrames      bool
 	timeout         time.Duration
@@ -299,6 +301,7 @@ func parseArgs() *config {
 	flag.BoolVar(&cfg.noVerify, "no-verify", false, "Disable TLS certificate verification")
 	flag.BoolVar(&cfg.dumpTLS, "dump-tls", false, "Display TLS session and certificate info only, then exit")
 	flag.BoolVar(&cfg.useHTTP2, "http2", false, "Use HTTP/2 (requires TLS)")
+	flag.BoolVar(&cfg.useHTTP3, "http3", false, "Use HTTP/3 (QUIC)")
 	flag.BoolVar(&cfg.useWebSocket, "websocket", false, "Upgrade to WebSocket protocol")
 	flag.BoolVar(&cfg.useWebSocket, "ws", false, "Upgrade to WebSocket protocol (alias for --websocket)")
 	flag.BoolVar(&cfg.dumpFrames, "dump-frames", false, "Display HTTP/2 frames (use with --http2)")
@@ -386,6 +389,15 @@ func validateConfig(cfg *config) error {
 	// Validate protocol conflicts
 	if cfg.useWebSocket && cfg.useHTTP2 {
 		return fmt.Errorf("cannot use --websocket and --http2 together")
+	}
+	if cfg.useWebSocket && cfg.useHTTP3 {
+		return fmt.Errorf("cannot use --websocket and --http3 together")
+	}
+	if cfg.useHTTP2 && cfg.useHTTP3 {
+		return fmt.Errorf("cannot use --http2 and --http3 together")
+	}
+	if cfg.unixSocket != "" && cfg.useHTTP3 {
+		return fmt.Errorf("--http3 cannot be used with --unix-socket")
 	}
 
 	return nil
@@ -500,6 +512,11 @@ func run(cfg *config) error {
 	var timing *timingInfo
 	if cfg.showTiming {
 		timing = &timingInfo{}
+	}
+
+	// Use HTTP/3 if requested (handles its own connection via QUIC)
+	if cfg.useHTTP3 {
+		return runHTTP3(request, cfg, timing)
 	}
 
 	// Use WebSocket if requested (handles its own connection)
@@ -1058,6 +1075,13 @@ func extractPort(target string) string {
 	return ""
 }
 
+func splitHostPort(target string) (host, port string) {
+	if idx := strings.LastIndex(target, ":"); idx != -1 {
+		return target[:idx], target[idx+1:]
+	}
+	return target, ""
+}
+
 func loadEnvFile(path string) error {
 	file, err := os.Open(path)
 	if err != nil {
@@ -1502,6 +1526,165 @@ func tlsVersionString(version uint16) string {
 	default:
 		return fmt.Sprintf("Unknown (0x%04x)", version)
 	}
+}
+
+// HTTP/3 implementation
+
+func runHTTP3(request string, cfg *config, timing *timingInfo) error {
+	// Parse the HTTP request into method, path, headers, body
+	method, path, headers, body, err := parseHTTPRequest(request)
+	if err != nil {
+		return err
+	}
+
+	// Get host from config
+	host, port := splitHostPort(cfg.target)
+	if port == "" {
+		port = "443" // Default HTTP/3 port
+	}
+
+	// Build full URL
+	url := fmt.Sprintf("https://%s:%s%s", host, port, path)
+
+	// Print request if requested
+	if cfg.printRequest && !cfg.quiet {
+		fmt.Fprintf(os.Stderr, "[*] Sending HTTP/3 request:\n")
+		fmt.Fprintf(os.Stderr, "%s\n", strings.Repeat("-", 40))
+		fmt.Fprintf(os.Stderr, "%s %s\n", method, url)
+		for k, v := range headers {
+			fmt.Fprintf(os.Stderr, "%s: %s\n", k, v)
+		}
+		if body != "" {
+			fmt.Fprintf(os.Stderr, "\n%s", body)
+		}
+		fmt.Fprintf(os.Stderr, "%s\n", strings.Repeat("-", 40))
+	}
+
+	// Create HTTP/3 transport
+	transport := &http3.Transport{
+		TLSClientConfig: &tls.Config{
+			InsecureSkipVerify: cfg.noVerify,
+			ServerName:         host,
+		},
+	}
+	defer transport.Close()
+
+	// Create HTTP client
+	client := &http.Client{
+		Transport: transport,
+		Timeout:   cfg.timeout,
+	}
+
+	// Create HTTP request
+	var reqBody io.Reader
+	if body != "" {
+		reqBody = strings.NewReader(body)
+	}
+
+	req, err := http.NewRequest(method, url, reqBody)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Add headers
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+
+	// Timing: connection start
+	if timing != nil {
+		timing.connectStart = time.Now()
+	}
+
+	if !cfg.quiet {
+		fmt.Fprintf(os.Stderr, "[*] Connecting to %s:%s (HTTP/3/QUIC)\n", host, port)
+	}
+
+	// Timing: request send start
+	if timing != nil {
+		timing.sendStart = time.Now()
+	}
+
+	// Send request
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("HTTP/3 request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Timing: first byte received
+	if timing != nil {
+		timing.firstByte = time.Now()
+		timing.connectDone = timing.firstByte // Approximate
+		timing.sendDone = timing.firstByte
+	}
+
+	// Output response
+	output := os.Stdout
+
+	// Print status line
+	if !cfg.bodyOnly {
+		protocol := cfg.colorize(colorGray, "HTTP/3")
+		status := fmt.Sprintf("%d %s", resp.StatusCode, http.StatusText(resp.StatusCode))
+		coloredStatus := cfg.colorStatus(status)
+		if _, err := fmt.Fprintf(output, "%s %s\r\n", protocol, coloredStatus); err != nil {
+			return err
+		}
+
+		// Print headers
+		for k, values := range resp.Header {
+			for _, v := range values {
+				headerName := cfg.colorize(colorCyan, k)
+				if _, err := fmt.Fprintf(output, "%s: %s\r\n", headerName, v); err != nil {
+					return err
+				}
+			}
+		}
+		if _, err := fmt.Fprintf(output, "\r\n"); err != nil {
+			return err
+		}
+	}
+
+	// Print body if not headers-only
+	if !cfg.headersOnly {
+		var bytesWritten int64
+		buf := make([]byte, defaultBufferSize)
+		for {
+			if cfg.maxBytes > 0 && bytesWritten >= cfg.maxBytes {
+				break
+			}
+
+			n, err := resp.Body.Read(buf)
+			if n > 0 {
+				toWrite := n
+				if cfg.maxBytes > 0 && bytesWritten+int64(n) > cfg.maxBytes {
+					toWrite = int(cfg.maxBytes - bytesWritten)
+				}
+				if _, writeErr := output.Write(buf[:toWrite]); writeErr != nil {
+					return writeErr
+				}
+				bytesWritten += int64(toWrite)
+			}
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				return fmt.Errorf("failed to read response body: %w", err)
+			}
+		}
+	}
+
+	// Timing: response done
+	if timing != nil {
+		timing.responseDone = time.Now()
+	}
+
+	// Print timing if requested
+	if timing != nil && !cfg.quiet {
+		fmt.Fprintf(os.Stderr, "%s\n", timing.durations())
+	}
+
+	return nil
 }
 
 // HTTP/2 implementation
