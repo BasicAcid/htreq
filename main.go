@@ -30,6 +30,9 @@ import (
 // Buffer size for reading network data
 const defaultBufferSize = 4096
 
+// Maximum allowed chunk size (100MB) to prevent DoS/OOM attacks
+const maxChunkSize = 100 * 1024 * 1024
+
 // ANSI color codes
 const (
 	colorReset   = "\033[0m"
@@ -41,6 +44,11 @@ const (
 	colorCyan    = "\033[36m"
 	colorGray    = "\033[90m"
 	colorBold    = "\033[1m"
+)
+
+// Compiled regular expressions (avoid recompilation in hot paths)
+var (
+	envVarRegex = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)`)
 )
 
 type config struct {
@@ -1238,9 +1246,8 @@ func readRequest(cfg *config) (string, error) {
 }
 
 func expandEnvVars(data string) string {
-	// Match $VAR or ${VAR}
-	re := regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)`)
-	return re.ReplaceAllStringFunc(data, func(match string) string {
+	// Use pre-compiled regex for performance
+	return envVarRegex.ReplaceAllStringFunc(data, func(match string) string {
 		// Extract variable name
 		varName := strings.TrimPrefix(match, "$")
 		varName = strings.TrimPrefix(varName, "{")
@@ -1450,6 +1457,11 @@ func readChunkedBody(reader *bufio.Reader, buffer *bytes.Buffer, output io.Write
 		chunkSize, err := strconv.ParseInt(sizeStr, 16, 64)
 		if err != nil {
 			return fmt.Errorf("invalid chunk size %q: expected hexadecimal number, parse error: %w", sizeStr, err)
+		}
+
+		// Validate chunk size to prevent DoS/OOM attacks
+		if chunkSize < 0 || chunkSize > maxChunkSize {
+			return fmt.Errorf("chunk size %d out of valid range [0, %d]", chunkSize, maxChunkSize)
 		}
 
 		// Last chunk
@@ -1809,7 +1821,10 @@ func runHTTP2(conn *tls.Conn, request string, cfg *config, timing *timingInfo) e
 	}
 
 	// Send HEADERS frame
-	headerBlock := encodeHeaders(method, path, headers, cfg)
+	headerBlock, err := encodeHeaders(method, path, headers, cfg)
+	if err != nil {
+		return fmt.Errorf("failed to encode headers: %w", err)
+	}
 	if err := framer.WriteHeaders(http2.HeadersFrameParam{
 		StreamID:      1,
 		BlockFragment: headerBlock,
@@ -1922,18 +1937,26 @@ func extractHostFromRequest(request string) (string, error) {
 	return "", fmt.Errorf("Host header not found in request (add 'Host: example.com' header or specify target on command line)")
 }
 
-func encodeHeaders(method, path string, headers map[string]string, cfg *config) []byte {
+func encodeHeaders(method, path string, headers map[string]string, cfg *config) ([]byte, error) {
 	buf := &bytes.Buffer{}
 	encoder := hpack.NewEncoder(buf)
 
 	// Encode pseudo-headers first (required by HTTP/2)
-	_ = encoder.WriteField(hpack.HeaderField{Name: ":method", Value: method})
-	_ = encoder.WriteField(hpack.HeaderField{Name: ":path", Value: path})
-	_ = encoder.WriteField(hpack.HeaderField{Name: ":scheme", Value: "https"})
+	if err := encoder.WriteField(hpack.HeaderField{Name: ":method", Value: method}); err != nil {
+		return nil, fmt.Errorf("failed to encode :method header: %w", err)
+	}
+	if err := encoder.WriteField(hpack.HeaderField{Name: ":path", Value: path}); err != nil {
+		return nil, fmt.Errorf("failed to encode :path header: %w", err)
+	}
+	if err := encoder.WriteField(hpack.HeaderField{Name: ":scheme", Value: "https"}); err != nil {
+		return nil, fmt.Errorf("failed to encode :scheme header: %w", err)
+	}
 
 	// Get authority from Host header
 	if host, ok := headers["host"]; ok {
-		_ = encoder.WriteField(hpack.HeaderField{Name: ":authority", Value: host})
+		if err := encoder.WriteField(hpack.HeaderField{Name: ":authority", Value: host}); err != nil {
+			return nil, fmt.Errorf("failed to encode :authority header: %w", err)
+		}
 	}
 
 	// Encode regular headers (skip Host as it's now :authority)
@@ -1941,7 +1964,9 @@ func encodeHeaders(method, path string, headers map[string]string, cfg *config) 
 		if k == "host" || k == "connection" || k == "transfer-encoding" || k == "upgrade" {
 			continue // These are not allowed in HTTP/2
 		}
-		_ = encoder.WriteField(hpack.HeaderField{Name: k, Value: v})
+		if err := encoder.WriteField(hpack.HeaderField{Name: k, Value: v}); err != nil {
+			return nil, fmt.Errorf("failed to encode header %s: %w", k, err)
+		}
 	}
 
 	headerBlock := buf.Bytes()
@@ -1953,7 +1978,7 @@ func encodeHeaders(method, path string, headers map[string]string, cfg *config) 
 		}
 	}
 
-	return headerBlock
+	return headerBlock, nil
 }
 
 func readHTTP2Response(framer *http2.Framer, cfg *config, timing *timingInfo) error {
