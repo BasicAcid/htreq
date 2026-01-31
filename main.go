@@ -605,7 +605,9 @@ func runHTTP1WithRedirects(conn net.Conn, initialRequest string, cfg *config, ti
 
 		// Close current connection if target changed
 		if newTarget != cfg.target {
-			conn.Close()
+			if closeErr := conn.Close(); closeErr != nil && !cfg.quiet {
+				fmt.Fprintf(os.Stderr, "[!] Warning: failed to close old connection: %v\n", closeErr)
+			}
 
 			// Update target
 			cfg.target = newTarget
@@ -615,11 +617,7 @@ func runHTTP1WithRedirects(conn net.Conn, initialRequest string, cfg *config, ti
 			if err != nil {
 				return err
 			}
-			defer func() {
-				if err := conn.Close(); err != nil && !cfg.quiet {
-					fmt.Fprintf(os.Stderr, "[!] Warning: failed to close connection: %v\n", err)
-				}
-			}()
+			// Note: connection will be closed by caller's defer
 		}
 
 		// Build new request with updated path
@@ -868,7 +866,13 @@ func readResponseWithInfo(conn net.Conn, cfg *config) (*responseInfo, error) {
 			if !cfg.bodyOnly {
 				toWrite := cfg.colorizeHTTPResponse(headers)
 				if cfg.maxBytes > 0 && bytesWritten+int64(len(toWrite)) > cfg.maxBytes {
-					toWrite = toWrite[:cfg.maxBytes-bytesWritten]
+					remaining := cfg.maxBytes - bytesWritten
+					if remaining <= 0 {
+						return respInfo, nil // Already at limit
+					}
+					if int64(len(toWrite)) > remaining {
+						toWrite = toWrite[:remaining]
+					}
 				}
 				if _, err := output.Write(toWrite); err != nil {
 					return nil, err
@@ -1100,29 +1104,35 @@ func connect(cfg *config, timing *timingInfo) (net.Conn, error) {
 }
 
 func parseTarget(target string, useTLS bool) (host, port string) {
-	if idx := strings.LastIndex(target, ":"); idx != -1 {
-		return target[:idx], target[idx+1:]
+	// Use net.SplitHostPort to properly handle IPv6 addresses like [::1]:8080
+	h, p, err := net.SplitHostPort(target)
+	if err != nil {
+		// No port specified, return target as host with default port
+		defaultPort := "80"
+		if useTLS {
+			defaultPort = "443"
+		}
+		return target, defaultPort
 	}
-
-	defaultPort := "80"
-	if useTLS {
-		defaultPort = "443"
-	}
-	return target, defaultPort
+	return h, p
 }
 
 func extractPort(target string) string {
-	if idx := strings.LastIndex(target, ":"); idx != -1 {
-		return target[idx+1:]
+	// Use net.SplitHostPort to properly handle IPv6 addresses
+	_, port, err := net.SplitHostPort(target)
+	if err != nil {
+		return "" // No port specified
 	}
-	return ""
+	return port
 }
 
 func splitHostPort(target string) (host, port string) {
-	if idx := strings.LastIndex(target, ":"); idx != -1 {
-		return target[:idx], target[idx+1:]
+	// Use net.SplitHostPort to properly handle IPv6 addresses
+	h, p, err := net.SplitHostPort(target)
+	if err != nil {
+		return target, "" // No port specified
 	}
-	return target, ""
+	return h, p
 }
 
 func loadEnvFile(path string) error {
@@ -1341,7 +1351,13 @@ func readResponse(conn net.Conn, cfg *config) error {
 			if !cfg.bodyOnly {
 				toWrite := cfg.colorizeHTTPResponse(headers)
 				if cfg.maxBytes > 0 && bytesWritten+int64(len(toWrite)) > cfg.maxBytes {
-					toWrite = toWrite[:cfg.maxBytes-bytesWritten]
+					remaining := cfg.maxBytes - bytesWritten
+					if remaining <= 0 {
+						return nil // Already at limit
+					}
+					if int64(len(toWrite)) > remaining {
+						toWrite = toWrite[:remaining]
+					}
 				}
 				if _, err := output.Write(toWrite); err != nil {
 					return err
@@ -2017,7 +2033,13 @@ func readHTTP2Response(framer *http2.Framer, cfg *config, timing *timingInfo) er
 			if !cfg.headersOnly && len(f.Data()) > 0 {
 				toWrite := f.Data()
 				if cfg.maxBytes > 0 && bytesWritten+int64(len(toWrite)) > cfg.maxBytes {
-					toWrite = toWrite[:cfg.maxBytes-bytesWritten]
+					remaining := cfg.maxBytes - bytesWritten
+					if remaining <= 0 {
+						return nil // Already at limit
+					}
+					if int64(len(toWrite)) > remaining {
+						toWrite = toWrite[:remaining]
+					}
 				}
 				if _, err := output.Write(toWrite); err != nil {
 					return err
@@ -2228,8 +2250,8 @@ func handleWebSocketSession(conn *websocket.Conn, cfg *config) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel() // Ensure all goroutines are stopped
 
-	// Channel to signal completion
-	done := make(chan error, 1)
+	// Channel to signal completion (buffer size 2 for both goroutines)
+	done := make(chan error, 2)
 
 	// Start reading messages from WebSocket
 	go func() {
