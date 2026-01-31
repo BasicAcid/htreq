@@ -39,7 +39,7 @@ Host: httpbin.org
 [*] Using host from request: httpbin.org
 [*] Connecting to httpbin.org:443 (TLS)
 HTTP/1.1 200 OK
-Date: Tue, 27 Jan 2026 14:23:34 GMT
+Date: Sat, 31 Jan 2026 00:23:09 GMT
 Content-Type: text/html; charset=utf-8
 Content-Length: 9593
 Connection: keep-alive
@@ -150,7 +150,7 @@ Host: httpbin.org
 [*] Using host from request: httpbin.org
 [*] Connecting to httpbin.org:443 (TLS)
 HTTP/1.1 200 OK
-Date: Tue, 27 Jan 2026 14:07:11 GMT
+Date: Sat, 31 Jan 2026 00:23:16 GMT
 Content-Type: text/html; charset=utf-8
 Content-Length: 9593
 Connection: keep-alive
@@ -179,23 +179,23 @@ PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n
 [*] HPACK Encoded Headers (16 bytes)
 [*] SEND: HEADERS frame (stream 1, 16 bytes HPACK data)
 HTTP/2 200
-Date: Tue, 27 Jan 2026 14:23:55 GMT
-Server: gws
-Accept-Ranges: none
-Content-Security-Policy-Report-Only: object-src 'none';base-uri 'self';script-src 'nonce-45HYjfafIZKyo-y0Yi_ATw' 'strict-dynamic' 'report-sample' 'unsafe-eval' 'unsafe-inline' https: http:;report-uri https://csp.withgoogle.com/csp/gws/other-hp
-X-Xss-Protection: 0
-X-Frame-Options: SAMEORIGIN
-Content-Type: text/html; charset=ISO-8859-1
-Accept-Ch: Sec-CH-Prefers-Color-Scheme
-P3p: CP="This is not a P3P policy! See g.co/p3phelp for more info."
-Alt-Svc: h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
 Expires: -1
+Content-Type: text/html; charset=ISO-8859-1
+P3p: CP="This is not a P3P policy! See g.co/p3phelp for more info."
+Set-Cookie: __Secure-BUCKET=CPEB; expires=Thu, 30-Jul-2026 00:23:18 GMT; path=/; domain=.google.com; Secure; HttpOnly
+Alt-Svc: h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+Accept-Ranges: none
+Reporting-Endpoints: default="//www.google.com/httpservice/retry/jserror?ei=dkt9aam0F5imkdUPhqGk2QE&cad=crash"
+X-Frame-Options: SAMEORIGIN
+Date: Sat, 31 Jan 2026 00:23:18 GMT
 Cache-Control: private, max-age=0
-Set-Cookie: __Secure-BUCKET=CCo; expires=Sun, 26-Jul-2026 14:23:55 GMT; path=/; domain=.google.com; Secure; HttpOnly
+Server: gws
 Vary: Accept-Encoding
+Content-Security-Policy-Report-Only: object-src 'none';base-uri 'self';script-src 'nonce-G063_IHQbZ4uRwJUk9x_WA' 'strict-dynamic' 'report-sample' 'unsafe-eval' 'unsafe-inline' https: http:;report-uri https://csp.withgoogle.com/csp/gws/other-hp
+Accept-Ch: Sec-CH-Prefers-Color-Scheme
+X-Xss-Protection: 0
 
-<!doctype html><html itemscope="" itemtype="http://schema.org/WebPage" lang="fr"><head><meta content="text/html; charset=UTF-8" http-equiv="Content-Type"><meta content="/images/branding/googleg/1x/googleg_standard_color_128dp.png" itemprop="image"><title>Google</title><script nonce="45HYjfafIZKyo-y0Yi_ATw">(function(){var _g={kEI:'e8p4afOyHJ-lqtsPov3t4AM',kEXPI:'0,203005,1101198,2900998,34844,14112,64701,217969,142932,226411,20908,5285475,113,23,6,5991831,30819601,25228681,78017,74369,65162,3977
-
+<!doctype html><html itemscope="" itemtype="http://schema.org/WebPage" lang="fr"><head><meta content="text/html; charset=UTF-8" http-equiv="Content-Type"><meta content="/images/branding/googleg/1x/googleg_standard_color_128dp.png" itemprop="image"><title>Google</title><script nonce="G063_IHQbZ4uRwJUk9x_WA">(function(){var _g={kEI:'dkt9aam0F5imkdUPhqGk2QE',kEXPI:'0,1304203,81,3,2900913,34845,14112,64701,360901,238459,42105909,25228681,152386,65166,39769,12268,48981,13359,709,23262,66135,79310,771
 [*] Response received
 #+end_example
 
@@ -207,13 +207,9 @@ Host: google.com
 #+end_src
 
 #+RESULTS:
-#+begin_example
-[*] Using host from request: google.com
-[*] Connecting to google.com:443 (HTTP/3/QUIC)
-<!doctype html><html itemscope="" itemtype="http://schema.org/WebPage" lang="en">
-<head><meta content="text/html; charset=UTF-8" http-equiv="Content-Type">
-[i] Server advertises HTTP/3 support via Alt-Svc
-#+end_example
+: [*] Using host from request: google.com
+: [*] Connecting to google.com:443 (HTTP/3/QUIC)
+: <!doctype html><html itemscope="" itemtype="http://schema.org/WebPage" lang="fr"><head><meta content="text/html; charset=UTF-8" http-equiv="Content-Type"><meta content="/images/branding/googleg/1x/goo[i] Server advertises HTTP/3 support via Alt-Svc
 
 *** Basic Authentication
 
@@ -223,14 +219,12 @@ Host: httpbin.org
 #+end_src
 
 #+RESULTS:
-#+begin_example
-[*] Using host from request: httpbin.org
-[*] Connecting to httpbin.org:443 (TLS)
-{
-  "authenticated": true,
-  "user": "testuser"
-}
-#+end_example
+: [*] Using host from request: httpbin.org
+: [*] Connecting to httpbin.org:443 (TLS)
+: {
+:   "authenticated": true,
+:   "user": "testuser"
+: }
 
 *** Request Timing Analysis
 
@@ -244,17 +238,23 @@ Host: httpbin.org
 [*] Using host from request: httpbin.org
 [*] Connecting to httpbin.org:443 (TLS)
 HTTP/1.1 200 OK
-Date: Sat, 31 Jan 2026 00:30:00 GMT
+Date: Sat, 31 Jan 2026 00:23:28 GMT
 Content-Type: text/html; charset=utf-8
+Content-Length: 9593
+Connection: keep-alive
+Server: gunicorn/19.9.0
+Access-Control-Allow-Origin: *
+Access-Control-Allow-Credentials: true
+
 
 [*] Timing breakdown:
-DNS lookup:      22.454ms
-TCP connect:     39.809ms
-TLS handshake:   28.810ms
-Request send:    0.006ms
-Server processing: 23.894ms
-Content download: 0.046ms
-Total:           115.028ms
+DNS lookup:      24.763ms
+TCP connect:     122.106ms
+TLS handshake:   204.638ms
+Request send:    25µs
+Server processing: 100.493ms
+Content download: 48µs
+Total:           452.082ms
 #+end_example
 
 *** Automatic Redirects
@@ -268,14 +268,20 @@ Host: httpbin.org
 #+begin_example
 [*] Using host from request: httpbin.org
 [*] Connecting to httpbin.org:443 (TLS)
-[*] Following redirect (1/10): /redirect/2
-[*] Following redirect (2/10): /redirect/1
-[*] Following redirect (3/10): /get
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2 Final//EN">
+<title>Redirecting...</title>
+<h1>Redirecting...</h1>
+<p>You should be redirected automatically to target URL: <a href="/relative-redirect/2">/r[*] Following redirect 1/10 to: /relative-redirect/2
+[*] Following redirect 2/10 to: /relative-redirect/1
+[*] Following redirect 3/10 to: /get
 {
   "args": {},
   "headers": {
-    "Host": "httpbin.org"
-  }
+    "Host": "httpbin.org",
+    "X-Amzn-Trace-Id": "Root=1-697d4b84-47d7d4f56cdae8d664993428"
+  },
+  "origin": "88.174.156.108",
+  "url": "https://httpbin.org/get"
 }
 #+end_example
 
@@ -322,9 +328,9 @@ Host: ${host}
 [*] Using host from request: httpbin.org
 [*] Connecting to httpbin.org:443 (TLS)
 HTTP/1.1 200 OK
-Date: Tue, 27 Jan 2026 14:08:37 GMT
+Date: Sat, 31 Jan 2026 00:23:38 GMT
 Content-Type: application/json
-Content-Length: 198
+Content-Length: 200
 Connection: keep-alive
 Server: gunicorn/19.9.0
 Access-Control-Allow-Origin: *
@@ -334,9 +340,9 @@ Access-Control-Allow-Credentials: true
   "args": {},
   "headers": {
     "Host": "httpbin.org",
-    "X-Amzn-Trace-Id": "Root=1-6978c6e5-752a3de34a398d1e18acb663"
+    "X-Amzn-Trace-Id": "Root=1-697d4b8a-5f133b6d6b4203c0458e7716"
   },
-  "origin": "77.158.80.50",
+  "origin": "88.174.156.108",
   "url": "https://httpbin.org/get"
 }
 #+end_example
@@ -354,7 +360,7 @@ Authorization: Bearer $token
 [*] Using host from request: httpbin.org
 [*] Connecting to httpbin.org:443 (TLS)
 HTTP/1.1 200 OK
-Date: Tue, 27 Jan 2026 14:12:21 GMT
+Date: Sat, 31 Jan 2026 00:23:41 GMT
 Content-Type: application/json
 Content-Length: 59
 Connection: keep-alive
