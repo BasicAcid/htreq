@@ -362,6 +362,32 @@ func parseArgs() *config {
 }
 
 func validateConfig(cfg *config) error {
+	// Validate timeout value
+	if cfg.timeout < 0 {
+		return fmt.Errorf("timeout cannot be negative")
+	}
+	if cfg.timeout == 0 {
+		cfg.timeout = 10 * time.Second // Set default if zero
+	}
+
+	// Validate maxRedirects value
+	if cfg.maxRedirects < 0 {
+		return fmt.Errorf("max-redirects cannot be negative")
+	}
+	if cfg.maxRedirects == 0 {
+		cfg.maxRedirects = 10 // Set default if zero
+	}
+
+	// Validate retryCount value
+	if cfg.retryCount < 0 {
+		return fmt.Errorf("retry count cannot be negative")
+	}
+
+	// Validate maxBytes value
+	if cfg.maxBytes < 0 {
+		return fmt.Errorf("max-bytes cannot be negative")
+	}
+
 	// Validate mutually exclusive output options
 	if cfg.headersOnly && cfg.bodyOnly {
 		return fmt.Errorf("cannot use --head and --body together")
@@ -843,8 +869,8 @@ func readResponseWithInfo(conn net.Conn, cfg *config) (*responseInfo, error) {
 	}
 
 	// Read until we find the end of headers
+	chunk := make([]byte, defaultBufferSize) // Allocate once, reuse in loop
 	for !headerEnded {
-		chunk := make([]byte, defaultBufferSize)
 		n, err := reader.Read(chunk)
 		if n > 0 {
 			buffer.Write(chunk[:n])
@@ -1215,7 +1241,7 @@ func readRequest(cfg *config) (string, error) {
 
 	// Expand environment variables if requested
 	if cfg.env {
-		request = expandEnvVars(request)
+		request = expandEnvVars(request, cfg)
 	}
 
 	// Normalize line endings to CRLF
@@ -1245,7 +1271,7 @@ func readRequest(cfg *config) (string, error) {
 	return request, nil
 }
 
-func expandEnvVars(data string) string {
+func expandEnvVars(data string, cfg *config) string {
 	// Use pre-compiled regex for performance
 	return envVarRegex.ReplaceAllStringFunc(data, func(match string) string {
 		// Extract variable name
@@ -1254,6 +1280,10 @@ func expandEnvVars(data string) string {
 		varName = strings.TrimSuffix(varName, "}")
 
 		if val := os.Getenv(varName); val != "" {
+			// Warn about non-HTREQ prefixed variables (potential security risk)
+			if !strings.HasPrefix(varName, "HTREQ_") && !cfg.quiet {
+				fmt.Fprintf(os.Stderr, "[!] Warning: expanding environment variable %s (consider using HTREQ_ prefix for safety)\n", varName)
+			}
 			return val
 		}
 		return match
@@ -1332,8 +1362,8 @@ func readResponse(conn net.Conn, cfg *config) error {
 	}
 
 	// Read until we find the end of headers
+	chunk := make([]byte, defaultBufferSize) // Allocate once, reuse in loop
 	for !headerEnded {
-		chunk := make([]byte, defaultBufferSize)
 		n, err := reader.Read(chunk)
 		if n > 0 {
 			buffer.Write(chunk[:n])
@@ -1429,10 +1459,10 @@ func parseHeaders(headers string) (*int64, bool) {
 }
 
 func readChunkedBody(reader *bufio.Reader, buffer *bytes.Buffer, output io.Writer, cfg *config, bytesWritten *int64) error {
+	chunk := make([]byte, defaultBufferSize) // Allocate once, reuse in all loops
 	for {
 		// Ensure we have enough data for chunk size line
 		for !bytes.Contains(buffer.Bytes(), []byte("\r\n")) {
-			chunk := make([]byte, defaultBufferSize)
 			n, err := reader.Read(chunk)
 			if n > 0 {
 				buffer.Write(chunk[:n])
@@ -1472,7 +1502,6 @@ func readChunkedBody(reader *bufio.Reader, buffer *bytes.Buffer, output io.Write
 		// Read chunk data + trailing CRLF
 		needed := chunkSize + 2
 		for int64(buffer.Len()) < needed {
-			chunk := make([]byte, defaultBufferSize)
 			n, err := reader.Read(chunk)
 			if n > 0 {
 				buffer.Write(chunk[:n])
@@ -1530,9 +1559,9 @@ func readRegularBody(reader *bufio.Reader, buffer *bytes.Buffer, output io.Write
 	}
 
 	// Read rest of body
+	chunk := make([]byte, defaultBufferSize) // Allocate once, reuse in loop
 	for (cfg.maxBytes == 0 || *bytesWritten < cfg.maxBytes) && (contentLength == nil || bodyReceived < *contentLength) {
 
-		chunk := make([]byte, defaultBufferSize)
 		n, err := reader.Read(chunk)
 		if n > 0 {
 			if !cfg.headersOnly {
