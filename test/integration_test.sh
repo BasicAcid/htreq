@@ -230,7 +230,7 @@ print_test_header "Error Handling"
 run_test \
     "Invalid request format" \
     "$BINARY -f $FIXTURES_DIR/invalid-request.http" \
-    "Host header not found" \
+    "host header not found" \
     "true"
 
 run_test \

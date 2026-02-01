@@ -33,6 +33,12 @@ const defaultBufferSize = 4096
 // Maximum allowed chunk size (100MB) to prevent DoS/OOM attacks
 const maxChunkSize = 100 * 1024 * 1024
 
+// WebSocket read deadline for context checking
+const wsReadDeadline = 100 * time.Millisecond
+
+// Minimum length for quoted strings in environment files
+const minQuotedStringLen = 2
+
 // ANSI color codes
 const (
 	colorReset   = "\033[0m"
@@ -1065,7 +1071,7 @@ func connect(cfg *config, timing *timingInfo) (net.Conn, error) {
 	defer cancel()
 	_, err := resolver.LookupHost(ctx, host)
 	if err != nil {
-		return nil, fmt.Errorf("DNS lookup failed: %w", err)
+		return nil, fmt.Errorf("dns lookup failed: %w", err)
 	}
 
 	if timing != nil {
@@ -1110,7 +1116,7 @@ func connect(cfg *config, timing *timingInfo) (net.Conn, error) {
 
 		if err := tlsConn.Handshake(); err != nil {
 			_ = conn.Close()
-			return nil, fmt.Errorf("TLS handshake failed: %w", err)
+			return nil, fmt.Errorf("tls handshake failed: %w", err)
 		}
 
 		if timing != nil {
@@ -1124,7 +1130,7 @@ func connect(cfg *config, timing *timingInfo) (net.Conn, error) {
 				if !cfg.quiet {
 					fmt.Fprintf(os.Stderr, "[!] Warning: Server did not negotiate HTTP/2 (got %s)\n", state.NegotiatedProtocol)
 				}
-				return nil, fmt.Errorf("HTTP/2 not supported by server")
+				return nil, fmt.Errorf("http/2 not supported by server")
 			}
 			if !cfg.quiet {
 				fmt.Fprintf(os.Stderr, "[*] Negotiated protocol: %s\n", state.NegotiatedProtocol)
@@ -1201,7 +1207,7 @@ func loadEnvFile(path string) error {
 		value := strings.TrimSpace(parts[1])
 
 		// Remove quotes if present
-		if len(value) >= 2 {
+		if len(value) >= minQuotedStringLen {
 			if (value[0] == '"' && value[len(value)-1] == '"') ||
 				(value[0] == '\'' && value[len(value)-1] == '\'') {
 				value = value[1 : len(value)-1]
@@ -1710,7 +1716,7 @@ func runHTTP3(request string, cfg *config, timing *timingInfo) error {
 	// Send request (includes QUIC handshake + request)
 	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("HTTP/3 request failed: %w", err)
+		return fmt.Errorf("http/3 request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -1957,13 +1963,13 @@ func extractHostFromRequest(request string) (string, error) {
 		if strings.ToLower(key) == "host" {
 			value := strings.TrimSpace(line[colonIdx+1:])
 			if value == "" {
-				return "", fmt.Errorf("Host header is present but empty (add a value like 'Host: example.com')")
+				return "", fmt.Errorf("host header is present but empty (add a value like 'Host: example.com')")
 			}
 			return value, nil
 		}
 	}
 
-	return "", fmt.Errorf("Host header not found in request (add 'Host: example.com' header or specify target on command line)")
+	return "", fmt.Errorf("host header not found in request (add 'Host: example.com' header or specify target on command line)")
 }
 
 func encodeHeaders(method, path string, headers map[string]string, cfg *config) ([]byte, error) {
@@ -2269,7 +2275,7 @@ func runWebSocket(request string, cfg *config, timing *timingInfo) error {
 	// Connect to WebSocket
 	wsConn, resp, err := dialer.Dial(url, headers)
 	if err != nil {
-		return fmt.Errorf("WebSocket dial failed: %w", err)
+		return fmt.Errorf("websocket dial failed: %w", err)
 	}
 	// Note: connection is closed in handleWebSocketSession
 
@@ -2316,7 +2322,7 @@ func handleWebSocketSession(conn *websocket.Conn, cfg *config) error {
 				return
 			default:
 				// Set read deadline to allow periodic context checks
-				conn.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+				conn.SetReadDeadline(time.Now().Add(wsReadDeadline))
 				messageType, message, err := conn.ReadMessage()
 				if err != nil {
 					// Check if it's a timeout (expected for context checking)
@@ -2325,7 +2331,7 @@ func handleWebSocketSession(conn *websocket.Conn, cfg *config) error {
 					}
 					// Real error or connection closed
 					if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseNormalClosure) {
-						done <- fmt.Errorf("WebSocket read error: %w", err)
+						done <- fmt.Errorf("websocket read error: %w", err)
 					} else {
 						done <- nil // Normal closure
 					}
@@ -2365,7 +2371,7 @@ func handleWebSocketSession(conn *websocket.Conn, cfg *config) error {
 				}
 				text := scanner.Text()
 				if err := conn.WriteMessage(websocket.TextMessage, []byte(text)); err != nil {
-					done <- fmt.Errorf("WebSocket write error: %w", err)
+					done <- fmt.Errorf("websocket write error: %w", err)
 					return
 				}
 				if !cfg.quiet {
