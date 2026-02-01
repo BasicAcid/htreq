@@ -18,7 +18,7 @@ func TestParseTarget(t *testing.T) {
 		{"host without port, no TLS", "example.com", false, "example.com", "80"},
 		{"host without port, with TLS", "example.com", true, "example.com", "443"},
 		{"IPv4 with port", "192.168.1.1:443", true, "192.168.1.1", "443"},
-		{"IPv6 with port", "[::1]:8080", false, "[::1]", "8080"},
+		{"IPv6 with port", "[::1]:8080", false, "::1", "8080"},
 		{"host with multiple colons", "api.example.com:9000", false, "api.example.com", "9000"},
 	}
 
@@ -80,9 +80,12 @@ func TestExpandEnvVars(t *testing.T) {
 		{"var at end", "Here is $TEST_VAR", "Here is test_value"},
 	}
 
+	// Create a config with quiet=true to suppress security warnings in tests
+	cfg := &config{quiet: true}
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := expandEnvVars(tt.input); got != tt.want {
+			if got := expandEnvVars(tt.input, cfg); got != tt.want {
 				t.Errorf("expandEnvVars() = %v, want %v", got, tt.want)
 			}
 		})
