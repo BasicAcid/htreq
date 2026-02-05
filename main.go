@@ -18,6 +18,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -2302,8 +2303,8 @@ func runWebSocket(request string, cfg *config, timing *timingInfo) error {
 
 func handleWebSocketSession(conn *websocket.Conn, cfg *config) error {
 	defer func() {
-		// Close connection, ignore error as we're already shutting down
-		_ = conn.Close()
+		// Close connection when function exits
+		conn.Close()
 	}()
 
 	// Create context for goroutine coordination
@@ -2313,16 +2314,37 @@ func handleWebSocketSession(conn *websocket.Conn, cfg *config) error {
 	// Channel to signal completion (buffer size 2 for both goroutines)
 	done := make(chan error, 2)
 
+	// WaitGroup to ensure both goroutines have finished
+	var wg sync.WaitGroup
+	wg.Add(2)
+
 	// Start reading messages from WebSocket
 	go func() {
+		defer wg.Done()
 		defer cancel() // Cancel context when this goroutine exits
+		defer func() {
+			// Recover from any panic (e.g., "repeated read on failed websocket connection")
+			if r := recover(); r != nil {
+				// Panic occurred, likely due to reading after connection close
+				// This is a known issue with gorilla/websocket - just exit gracefully
+				if !cfg.quiet {
+					fmt.Fprintf(os.Stderr, "[*] Reader stopped after connection close\n")
+				}
+			}
+		}()
+
 		for {
 			select {
 			case <-ctx.Done():
+				// Context cancelled, exit cleanly
 				return
 			default:
 				// Set read deadline to allow periodic context checks
-				conn.SetReadDeadline(time.Now().Add(wsReadDeadline))
+				if err := conn.SetReadDeadline(time.Now().Add(wsReadDeadline)); err != nil {
+					// Connection already closed
+					return
+				}
+
 				messageType, message, err := conn.ReadMessage()
 				if err != nil {
 					// Check if it's a timeout (expected for context checking)
@@ -2331,9 +2353,11 @@ func handleWebSocketSession(conn *websocket.Conn, cfg *config) error {
 					}
 					// Real error or connection closed
 					if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseNormalClosure) {
+						// Only report unexpected errors
 						done <- fmt.Errorf("websocket read error: %w", err)
 					} else {
-						done <- nil // Normal closure
+						// Normal closure or expected close
+						done <- nil
 					}
 					return
 				}
@@ -2353,11 +2377,14 @@ func handleWebSocketSession(conn *websocket.Conn, cfg *config) error {
 
 	// Read from stdin and send messages
 	go func() {
+		defer wg.Done()
 		defer cancel() // Cancel context when this goroutine exits
+
 		scanner := bufio.NewScanner(os.Stdin)
 		for {
 			select {
 			case <-ctx.Done():
+				// Context cancelled, exit cleanly
 				return
 			default:
 				if !scanner.Scan() {
@@ -2369,11 +2396,13 @@ func handleWebSocketSession(conn *websocket.Conn, cfg *config) error {
 					}
 					return
 				}
+
 				text := scanner.Text()
 				if err := conn.WriteMessage(websocket.TextMessage, []byte(text)); err != nil {
 					done <- fmt.Errorf("websocket write error: %w", err)
 					return
 				}
+
 				if !cfg.quiet {
 					fmt.Fprintf(os.Stderr, "[*] Sent message: %s\n", text)
 				}
@@ -2381,14 +2410,31 @@ func handleWebSocketSession(conn *websocket.Conn, cfg *config) error {
 		}
 	}()
 
-	// Wait for completion or error
+	// Wait for first goroutine to complete
 	err := <-done
 
-	// Send close message
-	closeErr := conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
-	if closeErr != nil && !cfg.quiet {
-		fmt.Fprintf(os.Stderr, "[!] Warning: failed to send close frame: %v\n", closeErr)
+	// Cancel context to signal other goroutine to stop
+	cancel()
+
+	// Wait for both goroutines to finish with timeout
+	waitDone := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(waitDone)
+	}()
+
+	select {
+	case <-waitDone:
+		// Both goroutines finished cleanly
+	case <-time.After(wsReadDeadline * 3):
+		// Timeout waiting for goroutines - they'll be cleaned up by defer
+		if !cfg.quiet {
+			fmt.Fprintf(os.Stderr, "[!] Warning: timeout waiting for goroutines to finish\n")
+		}
 	}
+
+	// Send close message (best effort)
+	conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
 
 	if !cfg.quiet {
 		fmt.Fprintf(os.Stderr, "\n[*] WebSocket connection closed\n")
