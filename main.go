@@ -2046,6 +2046,9 @@ func readHTTP2Response(framer *http2.Framer, cfg *config, timing *timingInfo) er
 				return fmt.Errorf("failed to write SETTINGS ACK: %w", err)
 			}
 
+		case *http2.WindowUpdateFrame:
+			// Server sent a WINDOW_UPDATE — nothing to do on our side
+
 		case *http2.HeadersFrame:
 			// Capture first byte timing when we receive headers
 			if timing != nil && timing.firstByte.IsZero() {
@@ -2091,7 +2094,21 @@ func readHTTP2Response(framer *http2.Framer, cfg *config, timing *timingInfo) er
 			}
 
 		case *http2.DataFrame:
-			if !cfg.headersOnly && len(f.Data()) > 0 {
+			dataLen := len(f.Data())
+
+			// Send WINDOW_UPDATE for both connection and stream to keep
+			// the flow-control window open. Without this, the server stops
+			// sending after the initial 65535-byte window is exhausted.
+			if dataLen > 0 {
+				if err := framer.WriteWindowUpdate(0, uint32(dataLen)); err != nil {
+					return fmt.Errorf("failed to write connection WINDOW_UPDATE: %w", err)
+				}
+				if err := framer.WriteWindowUpdate(f.Header().StreamID, uint32(dataLen)); err != nil {
+					return fmt.Errorf("failed to write stream WINDOW_UPDATE: %w", err)
+				}
+			}
+
+			if !cfg.headersOnly && dataLen > 0 {
 				toWrite := f.Data()
 				if cfg.maxBytes > 0 && bytesWritten+int64(len(toWrite)) > cfg.maxBytes {
 					remaining := cfg.maxBytes - bytesWritten
