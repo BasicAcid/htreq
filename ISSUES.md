@@ -20,7 +20,7 @@ When following redirects to the same host, the code reuses the same `conn` for s
 
 **Fix:** Either always reconnect on each redirect, or check the `Connection` response header.
 
-**Status:** Open
+**Status:** Fixed — reconnect when target changes, TLS requirement changes, or server sends `Connection: close`. `parseRedirectLocation` now returns the scheme so http→https upgrades are handled correctly. Connection ownership is tracked so the caller's deferred close is never double-fired.
 
 ---
 

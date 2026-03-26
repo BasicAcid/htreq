@@ -595,7 +595,19 @@ func run(cfg *config) error {
 }
 
 // runHTTP1WithRedirects handles HTTP/1.1 with automatic redirect following
-func runHTTP1WithRedirects(conn net.Conn, initialRequest string, cfg *config, timing *timingInfo) error {
+func runHTTP1WithRedirects(initialConn net.Conn, initialRequest string, cfg *config, timing *timingInfo) error {
+	conn := initialConn
+	ownConn := false // whether we opened conn ourselves (vs. received from caller)
+
+	defer func() {
+		// Only close connections we opened; the caller owns initialConn.
+		if ownConn {
+			if err := conn.Close(); err != nil && !cfg.quiet {
+				fmt.Fprintf(os.Stderr, "[!] Warning: failed to close redirect connection: %v\n", err)
+			}
+		}
+	}()
+
 	request := initialRequest
 	redirectCount := 0
 	visited := make(map[string]bool) // Track visited URLs to detect loops
@@ -638,30 +650,31 @@ func runHTTP1WithRedirects(conn net.Conn, initialRequest string, cfg *config, ti
 			fmt.Fprintf(os.Stderr, "[*] Following redirect %d/%d to: %s\n", redirectCount, cfg.maxRedirects, respInfo.location)
 		}
 
-		// Parse the redirect location
-		newTarget, newPath, err := parseRedirectLocation(respInfo.location, cfg.target)
+		// Parse the redirect location (scheme included to detect http→https upgrades)
+		newTarget, newPath, newUseTLS, err := parseRedirectLocation(respInfo.location, cfg.target, cfg.useTLS)
 		if err != nil {
 			return fmt.Errorf("invalid redirect location: %w", err)
 		}
 
-		// Close current connection if target changed
-		if newTarget != cfg.target {
-			if closeErr := conn.Close(); closeErr != nil && !cfg.quiet {
-				fmt.Fprintf(os.Stderr, "[!] Warning: failed to close old connection: %v\n", closeErr)
+		// Reconnect when: target changed, TLS requirement changed, or server
+		// indicated it closed the connection via "Connection: close".
+		connectionClose := strings.Contains(strings.ToLower(respInfo.headers), "connection: close")
+		if newTarget != cfg.target || newUseTLS != cfg.useTLS || connectionClose {
+			if ownConn {
+				if closeErr := conn.Close(); closeErr != nil && !cfg.quiet {
+					fmt.Fprintf(os.Stderr, "[!] Warning: failed to close old connection: %v\n", closeErr)
+				}
 			}
-
-			// Update target
 			cfg.target = newTarget
-
-			// Reconnect to new target
+			cfg.useTLS = newUseTLS
 			conn, err = connect(cfg, nil) // Don't track timing for redirects
 			if err != nil {
 				return err
 			}
-			// Note: connection will be closed by caller's defer
+			ownConn = true
 		}
 
-		// Build new request with updated path
+		// Build new request with updated path and host
 		request, err = updateRequestPath(initialRequest, newPath, newTarget)
 		if err != nil {
 			return fmt.Errorf("failed to update request: %w", err)
@@ -794,27 +807,29 @@ func runHTTP1WithResponse(conn net.Conn, request string, cfg *config, timing *ti
 	return respInfo, nil
 }
 
-// parseRedirectLocation parses a redirect location and returns new target and path
-func parseRedirectLocation(location, currentTarget string) (newTarget, newPath string, err error) {
-	// Handle relative URLs
+// parseRedirectLocation parses a redirect location and returns new target, path, and TLS flag.
+// currentUseTLS is used as the default for relative URLs (scheme unchanged).
+func parseRedirectLocation(location, currentTarget string, currentUseTLS bool) (newTarget, newPath string, newUseTLS bool, err error) {
+	// Handle relative URLs — scheme and target stay the same
 	if !strings.HasPrefix(location, "http://") && !strings.HasPrefix(location, "https://") {
-		// Relative URL - keep same target
 		newTarget = currentTarget
+		newUseTLS = currentUseTLS
 		if strings.HasPrefix(location, "/") {
 			newPath = location
 		} else {
 			newPath = "/" + location
 		}
-		return newTarget, newPath, nil
+		return newTarget, newPath, newUseTLS, nil
 	}
 
 	// Parse absolute URL
-	// Remove scheme
 	schemeEnd := strings.Index(location, "://")
 	if schemeEnd == -1 {
-		return "", "", fmt.Errorf("invalid URL: %s", location)
+		return "", "", false, fmt.Errorf("invalid URL: %s", location)
 	}
 
+	scheme := location[:schemeEnd]
+	newUseTLS = scheme == "https"
 	remainder := location[schemeEnd+3:]
 
 	// Find path separator
@@ -828,7 +843,7 @@ func parseRedirectLocation(location, currentTarget string) (newTarget, newPath s
 		newPath = remainder[pathStart:]
 	}
 
-	return newTarget, newPath, nil
+	return newTarget, newPath, newUseTLS, nil
 }
 
 // updateRequestPath updates the request with a new path and host
