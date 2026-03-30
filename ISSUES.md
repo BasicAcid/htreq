@@ -70,7 +70,7 @@ Go 1.21+ has a builtin `min()`. With `go 1.24.4`, the custom definition is unnec
 
 The stdin-reading goroutine calls `scanner.Scan()` which blocks on `os.Stdin`. The `select` with `ctx.Done()` only runs between iterations. If stdin is blocked waiting for input, `cancel()` won't unblock it. The goroutine hangs until the 300ms timeout at line 2429.
 
-**Status:** Open
+**Status:** Fixed — scanner moved to a dedicated inner goroutine feeding a `lines` channel; the outer goroutine selects between that channel and `ctx.Done()` so cancellation is immediate.
 
 ---
 

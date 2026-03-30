@@ -2405,34 +2405,44 @@ func handleWebSocketSession(conn *websocket.Conn, cfg *config) error {
 		}
 	}()
 
-	// Read from stdin and send messages
+	// Read from stdin and send messages.
+	// scanner.Scan() blocks and cannot be interrupted by a context, so we run it
+	// in a dedicated inner goroutine that feeds lines into a channel. The outer
+	// goroutine selects between that channel and ctx.Done(), allowing it to exit
+	// immediately when the reader goroutine or the caller cancels the context.
 	go func() {
 		defer wg.Done()
-		defer cancel() // Cancel context when this goroutine exits
+		defer cancel()
 
-		scanner := bufio.NewScanner(os.Stdin)
+		lines := make(chan string)
+		scanErrc := make(chan error, 1)
+		go func() {
+			scanner := bufio.NewScanner(os.Stdin)
+			for scanner.Scan() {
+				lines <- scanner.Text()
+			}
+			scanErrc <- scanner.Err()
+			close(lines)
+		}()
+
 		for {
 			select {
 			case <-ctx.Done():
-				// Context cancelled, exit cleanly
 				return
-			default:
-				if !scanner.Scan() {
-					// Scanner finished (EOF or error)
-					if err := scanner.Err(); err != nil {
+			case text, ok := <-lines:
+				if !ok {
+					// Scanner finished (EOF or Ctrl+D)
+					if err := <-scanErrc; err != nil {
 						done <- fmt.Errorf("stdin read error: %w", err)
 					} else {
-						done <- nil // EOF on stdin (e.g., Ctrl+D)
+						done <- nil
 					}
 					return
 				}
-
-				text := scanner.Text()
 				if err := conn.WriteMessage(websocket.TextMessage, []byte(text)); err != nil {
 					done <- fmt.Errorf("websocket write error: %w", err)
 					return
 				}
-
 				if !cfg.quiet {
 					fmt.Fprintf(os.Stderr, "[*] Sent message: %s\n", text)
 				}
