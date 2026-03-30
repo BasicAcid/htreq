@@ -30,7 +30,7 @@ When following redirects to the same host, the code reuses the same `conn` for s
 
 `connect()` first calls `resolver.LookupHost()` for timing, then `net.DialTimeout()` which does its own DNS resolution internally. The two lookups may resolve to different IPs. Use `net.Dialer` with a custom resolver or `net.Dialer.ControlContext` to hook into the connection lifecycle for timing without duplicate work.
 
-**Status:** Open
+**Status:** Fixed — DNS is now resolved explicitly only when timing is requested; the resolved IP is used directly for the TCP dial so no second lookup occurs. Without timing, `DialTimeout` handles resolution as a single step.
 
 ---
 

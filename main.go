@@ -1076,22 +1076,21 @@ func connect(cfg *config, timing *timingInfo) (net.Conn, error) {
 		fmt.Fprintf(os.Stderr, "[*] Connecting to %s:%s%s\n", host, port, tlsStr)
 	}
 
-	// DNS resolution timing
+	// When timing is requested, resolve DNS explicitly so we can bracket it,
+	// then dial the resolved IP directly to avoid a second lookup inside DialTimeout.
+	// Without timing we skip the explicit resolve and let DialTimeout handle it.
+	dialAddr := net.JoinHostPort(host, port)
 	if timing != nil {
 		timing.dnsStart = time.Now()
-	}
-
-	// Resolve hostname to get timing
-	resolver := &net.Resolver{}
-	ctx, cancel := context.WithTimeout(context.Background(), cfg.timeout)
-	defer cancel()
-	_, err := resolver.LookupHost(ctx, host)
-	if err != nil {
-		return nil, fmt.Errorf("dns lookup failed: %w", err)
-	}
-
-	if timing != nil {
+		resolveCtx, resolveCancel := context.WithTimeout(context.Background(), cfg.timeout)
+		defer resolveCancel()
+		addrs, err := (&net.Resolver{}).LookupHost(resolveCtx, host)
+		if err != nil {
+			return nil, fmt.Errorf("dns lookup failed: %w", err)
+		}
 		timing.dnsDone = time.Now()
+		// Dial the resolved IP directly so DialTimeout doesn't re-resolve
+		dialAddr = net.JoinHostPort(addrs[0], port)
 	}
 
 	// TCP connection timing
@@ -1100,7 +1099,7 @@ func connect(cfg *config, timing *timingInfo) (net.Conn, error) {
 	}
 
 	// Connect TCP
-	conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, port), cfg.timeout)
+	conn, err := net.DialTimeout("tcp", dialAddr, cfg.timeout)
 	if err != nil {
 		return nil, fmt.Errorf("connection failed: %w", err)
 	}
