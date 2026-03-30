@@ -415,29 +415,6 @@ func TestTLSVersionString(t *testing.T) {
 	}
 }
 
-// Test min helper function
-func TestMin(t *testing.T) {
-	tests := []struct {
-		name string
-		a    int
-		b    int
-		want int
-	}{
-		{"a smaller", 5, 10, 5},
-		{"b smaller", 10, 5, 5},
-		{"equal", 7, 7, 7},
-		{"zero", 0, 5, 0},
-		{"negative", -5, 3, -5},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := min(tt.a, tt.b); got != tt.want {
-				t.Errorf("min() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
 
 // Test validateConfig function
 func TestValidateConfig(t *testing.T) {

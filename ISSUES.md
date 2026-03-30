@@ -50,7 +50,7 @@ HTTP/2 can have duplicate headers (e.g., `set-cookie`). Storing response headers
 
 If the prefix is larger than the caller's buffer `p`, only `copy(p, c.prefix)` bytes are returned and the rest of the prefix is lost because `c.used` is set to `true` unconditionally. Currently the prefix is always exactly 1 byte (for TTFB timing), so this works in practice, but it's a latent bug.
 
-**Status:** Open
+**Status:** Fixed — replaced `used bool` with `pos int`; `Read` copies from `prefix[pos:]` and advances the offset, so callers with a small buffer get the prefix in multiple reads without data loss.
 
 ---
 
@@ -60,7 +60,7 @@ If the prefix is larger than the caller's buffer `p`, only `copy(p, c.prefix)` b
 
 Go 1.21+ has a builtin `min()`. With `go 1.24.4`, the custom definition is unnecessary and could confuse contributors. Remove it and use the builtin.
 
-**Status:** Open
+**Status:** Fixed — removed custom `min()` and its test; the Go 1.21+ builtin is used directly.
 
 ---
 

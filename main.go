@@ -1044,13 +1044,13 @@ func printAltSvcHint(altSvc string, cfg *config) {
 type prefixConn struct {
 	net.Conn
 	prefix []byte
-	used   bool
+	pos    int // bytes of prefix already consumed
 }
 
 func (c *prefixConn) Read(p []byte) (n int, err error) {
-	if !c.used && len(c.prefix) > 0 {
-		c.used = true
-		n = copy(p, c.prefix)
+	if c.pos < len(c.prefix) {
+		n = copy(p, c.prefix[c.pos:])
+		c.pos += n
 		return n, nil
 	}
 	return c.Conn.Read(p)
@@ -2221,12 +2221,6 @@ func dumpRawFrame(data []byte, direction string, cfg *config) {
 	}
 }
 
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
 
 // WebSocket implementation
 
