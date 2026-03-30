@@ -2035,10 +2035,10 @@ func readHTTP2Response(framer *http2.Framer, cfg *config, timing *timingInfo) er
 	output := os.Stdout
 	var bytesWritten int64
 	headersReceived := false
-	responseHeaders := make(map[string]string)
+	responseHeaders := make(map[string][]string)
 
 	decoder := hpack.NewDecoder(4096, func(f hpack.HeaderField) {
-		responseHeaders[f.Name] = f.Value
+		responseHeaders[f.Name] = append(responseHeaders[f.Name], f.Value)
 	})
 
 	for {
@@ -2078,19 +2078,24 @@ func readHTTP2Response(framer *http2.Framer, cfg *config, timing *timingInfo) er
 				headersReceived = true
 				if !cfg.bodyOnly {
 					// Print status line
-					status := responseHeaders[":status"]
+					status := ""
+					if vals := responseHeaders[":status"]; len(vals) > 0 {
+						status = vals[0]
+					}
 					protocol := cfg.colorize(colorGray, "HTTP/2")
 					coloredStatus := cfg.colorStatus(status)
 					if _, err := fmt.Fprintf(output, "%s %s\r\n", protocol, coloredStatus); err != nil {
 						return err
 					}
 
-					// Print headers
-					for k, v := range responseHeaders {
+					// Print headers (one line per value to preserve duplicates)
+					for k, vals := range responseHeaders {
 						if !strings.HasPrefix(k, ":") {
 							headerKey := cfg.colorHeaderKey(http.CanonicalHeaderKey(k))
-							if _, err := fmt.Fprintf(output, "%s: %s\r\n", headerKey, v); err != nil {
-								return err
+							for _, v := range vals {
+								if _, err := fmt.Fprintf(output, "%s: %s\r\n", headerKey, v); err != nil {
+									return err
+								}
 							}
 						}
 					}
@@ -2168,8 +2173,8 @@ func readHTTP2Response(framer *http2.Framer, cfg *config, timing *timingInfo) er
 	}
 
 	// Check for Alt-Svc hints
-	if altSvc, ok := responseHeaders["alt-svc"]; ok && altSvc != "" {
-		printAltSvcHint(altSvc, cfg)
+	if vals := responseHeaders["alt-svc"]; len(vals) > 0 && vals[0] != "" {
+		printAltSvcHint(vals[0], cfg)
 	}
 
 	return nil

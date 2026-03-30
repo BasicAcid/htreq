@@ -40,7 +40,7 @@ When following redirects to the same host, the code reuses the same `conn` for s
 
 HTTP/2 can have duplicate headers (e.g., `set-cookie`). Storing response headers in `map[string]string` means only the last value per key is kept. Should use `map[string][]string` or `http.Header`.
 
-**Status:** Open
+**Status:** Fixed — `responseHeaders` is now `map[string][]string`; the HPACK decoder appends rather than overwrites, and the print loop emits one line per value.
 
 ---
 
