@@ -40,27 +40,6 @@ func TestParseTarget(t *testing.T) {
 	}
 }
 
-// Test extractPort function
-func TestExtractPort(t *testing.T) {
-	tests := []struct {
-		name   string
-		target string
-		want   string
-	}{
-		{"with port", "example.com:443", "443"},
-		{"without port", "example.com", ""},
-		{"with non-standard port", "api.example.com:8080", "8080"},
-		{"IPv4 with port", "192.168.1.1:80", "80"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := extractPort(tt.target); got != tt.want {
-				t.Errorf("extractPort() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
 
 // Test expandEnvVars function
 func TestExpandEnvVars(t *testing.T) {

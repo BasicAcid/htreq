@@ -472,7 +472,7 @@ func run(cfg *config) error {
 
 	// Smart TLS inference (unless explicitly set)
 	if cfg.unixSocket == "" && !cfg.useTLS && !cfg.noTLS {
-		port := extractPort(cfg.target)
+		_, port, _ := net.SplitHostPort(cfg.target)
 		// Default to TLS for port 443 or when no port is specified (will default to 443)
 		if port == "443" || port == "" {
 			cfg.useTLS = true
@@ -1182,23 +1182,6 @@ func parseTarget(target string, useTLS bool) (host, port string) {
 	return h, p
 }
 
-func extractPort(target string) string {
-	// Use net.SplitHostPort to properly handle IPv6 addresses
-	_, port, err := net.SplitHostPort(target)
-	if err != nil {
-		return "" // No port specified
-	}
-	return port
-}
-
-func splitHostPort(target string) (host, port string) {
-	// Use net.SplitHostPort to properly handle IPv6 addresses
-	h, p, err := net.SplitHostPort(target)
-	if err != nil {
-		return target, "" // No port specified
-	}
-	return h, p
-}
 
 func loadEnvFile(path string) error {
 	file, err := os.Open(path)
@@ -1674,10 +1657,7 @@ func runHTTP3(request string, cfg *config, timing *timingInfo) error {
 	}
 
 	// Get host from config
-	host, port := splitHostPort(cfg.target)
-	if port == "" {
-		port = "443" // Default HTTP/3 port
-	}
+	host, port := parseTarget(cfg.target, true)
 
 	// Build full URL
 	url := fmt.Sprintf("https://%s:%s%s", host, port, path)
