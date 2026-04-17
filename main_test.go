@@ -40,7 +40,6 @@ func TestParseTarget(t *testing.T) {
 	}
 }
 
-
 // Test expandEnvVars function
 func TestExpandEnvVars(t *testing.T) {
 	// Set up test environment variables

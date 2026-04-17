@@ -470,7 +470,7 @@ func run(cfg *config) error {
 
 	// Load environment file if specified
 	if cfg.envFile != "" {
-		if err := loadEnvFile(cfg.envFile); err != nil {
+		if err := loadEnvFile(cfg.envFile, cfg); err != nil {
 			return err
 		}
 		cfg.env = true
@@ -1189,7 +1189,7 @@ func parseTarget(target string, useTLS bool) (host, port string) {
 	return h, p
 }
 
-func loadEnvFile(path string) error {
+func loadEnvFile(path string, cfg *config) error {
 	file, err := os.Open(path)
 	if err != nil {
 		return fmt.Errorf("environment file not found: %s", path)
@@ -1226,6 +1226,11 @@ func loadEnvFile(path string) error {
 				(value[0] == '\'' && value[len(value)-1] == '\'') {
 				value = value[1 : len(value)-1]
 			}
+		}
+
+		// Warn about non-HTREQ_ prefixed keys — same policy as expandEnvVars
+		if !strings.HasPrefix(key, "HTREQ_") && !cfg.quiet {
+			fmt.Fprintf(os.Stderr, "[!] Warning: setting environment variable %s from file (consider using HTREQ_ prefix for safety)\n", key)
 		}
 
 		if err := os.Setenv(key, value); err != nil {
