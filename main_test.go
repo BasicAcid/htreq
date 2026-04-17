@@ -1,8 +1,13 @@
 package main
 
 import (
+	"bytes"
+	"io"
+	"net"
 	"os"
+	"strings"
 	"testing"
+	"time"
 )
 
 // Test parseTarget function
@@ -526,4 +531,271 @@ func TestValidateConfig(t *testing.T) {
 // Helper function to create int64 pointer
 func int64Ptr(i int64) *int64 {
 	return &i
+}
+
+// Test parseRedirectLocation function
+func TestParseRedirectLocation(t *testing.T) {
+	tests := []struct {
+		name           string
+		location       string
+		currentTarget  string
+		currentUseTLS  bool
+		wantTarget     string
+		wantPath       string
+		wantUseTLS     bool
+		wantErr        bool
+	}{
+		{
+			name:          "absolute path relative URL",
+			location:      "/new/path",
+			currentTarget: "example.com",
+			currentUseTLS: false,
+			wantTarget:    "example.com",
+			wantPath:      "/new/path",
+			wantUseTLS:    false,
+		},
+		{
+			name:          "relative URL without leading slash",
+			location:      "other/path",
+			currentTarget: "example.com",
+			currentUseTLS: true,
+			wantTarget:    "example.com",
+			wantPath:      "/other/path",
+			wantUseTLS:    true,
+		},
+		{
+			name:          "relative URL inherits current TLS",
+			location:      "/path",
+			currentTarget: "example.com:8443",
+			currentUseTLS: true,
+			wantTarget:    "example.com:8443",
+			wantPath:      "/path",
+			wantUseTLS:    true,
+		},
+		{
+			name:          "absolute http URL disables TLS",
+			location:      "http://other.com/path",
+			currentTarget: "example.com",
+			currentUseTLS: true,
+			wantTarget:    "other.com",
+			wantPath:      "/path",
+			wantUseTLS:    false,
+		},
+		{
+			name:          "absolute https URL enables TLS",
+			location:      "https://secure.com/login",
+			currentTarget: "example.com",
+			currentUseTLS: false,
+			wantTarget:    "secure.com",
+			wantPath:      "/login",
+			wantUseTLS:    true,
+		},
+		{
+			name:          "https URL with no path",
+			location:      "https://secure.com",
+			currentTarget: "example.com",
+			currentUseTLS: false,
+			wantTarget:    "secure.com",
+			wantPath:      "/",
+			wantUseTLS:    true,
+		},
+		{
+			name:          "same host http to https upgrade",
+			location:      "https://example.com/secure",
+			currentTarget: "example.com",
+			currentUseTLS: false,
+			wantTarget:    "example.com",
+			wantPath:      "/secure",
+			wantUseTLS:    true,
+		},
+		{
+			name:          "URL with port",
+			location:      "https://api.example.com:8443/v2",
+			currentTarget: "example.com",
+			currentUseTLS: false,
+			wantTarget:    "api.example.com:8443",
+			wantPath:      "/v2",
+			wantUseTLS:    true,
+		},
+		{
+			name:          "URL with query string",
+			location:      "https://example.com/path?foo=bar",
+			currentTarget: "old.com",
+			currentUseTLS: false,
+			wantTarget:    "example.com",
+			wantPath:      "/path?foo=bar",
+			wantUseTLS:    true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotTarget, gotPath, gotUseTLS, err := parseRedirectLocation(tt.location, tt.currentTarget, tt.currentUseTLS)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("parseRedirectLocation() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if gotTarget != tt.wantTarget {
+				t.Errorf("parseRedirectLocation() target = %q, want %q", gotTarget, tt.wantTarget)
+			}
+			if gotPath != tt.wantPath {
+				t.Errorf("parseRedirectLocation() path = %q, want %q", gotPath, tt.wantPath)
+			}
+			if gotUseTLS != tt.wantUseTLS {
+				t.Errorf("parseRedirectLocation() useTLS = %v, want %v", gotUseTLS, tt.wantUseTLS)
+			}
+		})
+	}
+}
+
+// Test prefixConn
+func TestPrefixConn(t *testing.T) {
+	t.Run("prefix fits in one read", func(t *testing.T) {
+		underlying := bytes.NewReader([]byte("world"))
+		pc := &prefixConn{
+			Conn:   fakeConn{underlying},
+			prefix: []byte("hello"),
+		}
+
+		buf := make([]byte, 10)
+		n, err := pc.Read(buf)
+		if err != nil {
+			t.Fatalf("Read() error = %v", err)
+		}
+		if string(buf[:n]) != "hello" {
+			t.Errorf("Read() = %q, want %q", string(buf[:n]), "hello")
+		}
+
+		// Next read should come from underlying
+		n, err = pc.Read(buf)
+		if err != nil {
+			t.Fatalf("Read() error = %v", err)
+		}
+		if string(buf[:n]) != "world" {
+			t.Errorf("Read() = %q, want %q", string(buf[:n]), "world")
+		}
+	})
+
+	t.Run("prefix larger than buffer (no data loss)", func(t *testing.T) {
+		underlying := bytes.NewReader([]byte("Z"))
+		pc := &prefixConn{
+			Conn:   fakeConn{underlying},
+			prefix: []byte("ABCDE"),
+		}
+
+		// Read two bytes at a time
+		var got strings.Builder
+		buf := make([]byte, 2)
+		for got.Len() < 5 {
+			n, err := pc.Read(buf)
+			if err != nil && err != io.EOF {
+				t.Fatalf("Read() error = %v", err)
+			}
+			got.Write(buf[:n])
+			if err == io.EOF {
+				break
+			}
+		}
+		if got.String() != "ABCDE" {
+			t.Errorf("accumulated prefix = %q, want %q", got.String(), "ABCDE")
+		}
+
+		// Next read should come from underlying conn
+		n, err := pc.Read(buf)
+		if err != nil {
+			t.Fatalf("Read() error = %v", err)
+		}
+		if string(buf[:n]) != "Z" {
+			t.Errorf("underlying read = %q, want %q", string(buf[:n]), "Z")
+		}
+	})
+
+	t.Run("empty prefix reads from underlying immediately", func(t *testing.T) {
+		underlying := bytes.NewReader([]byte("data"))
+		pc := &prefixConn{
+			Conn:   fakeConn{underlying},
+			prefix: []byte{},
+		}
+
+		buf := make([]byte, 10)
+		n, err := pc.Read(buf)
+		if err != nil {
+			t.Fatalf("Read() error = %v", err)
+		}
+		if string(buf[:n]) != "data" {
+			t.Errorf("Read() = %q, want %q", string(buf[:n]), "data")
+		}
+	})
+}
+
+// fakeConn implements net.Conn using a bytes.Reader for the read side
+type fakeConn struct{ r *bytes.Reader }
+
+func (f fakeConn) Read(p []byte) (int, error)  { return f.r.Read(p) }
+func (f fakeConn) Write(p []byte) (int, error) { return len(p), nil }
+func (f fakeConn) Close() error                { return nil }
+func (f fakeConn) LocalAddr() net.Addr         { return nil }
+func (f fakeConn) RemoteAddr() net.Addr        { return nil }
+func (f fakeConn) SetDeadline(t time.Time) error      { return nil }
+func (f fakeConn) SetReadDeadline(t time.Time) error  { return nil }
+func (f fakeConn) SetWriteDeadline(t time.Time) error { return nil }
+
+// Test colorizeHTTPResponse
+func TestColorizeHTTPResponse(t *testing.T) {
+	t.Run("colors disabled returns input unchanged", func(t *testing.T) {
+		cfg := &config{useColor: false}
+		input := []byte("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nbody: not a header")
+		got := cfg.colorizeHTTPResponse(input)
+		if !bytes.Equal(got, input) {
+			t.Errorf("colorizeHTTPResponse() with no color modified output")
+		}
+	})
+
+	t.Run("status line is colorized", func(t *testing.T) {
+		cfg := &config{useColor: true}
+		input := []byte("HTTP/1.1 200 OK\r\n\r\n")
+		got := string(cfg.colorizeHTTPResponse(input))
+		if !strings.Contains(got, colorGray+"HTTP/1.1"+colorReset) {
+			t.Errorf("status line protocol not colorized in gray: %q", got)
+		}
+		if !strings.Contains(got, colorGreen+"200"+colorReset) {
+			t.Errorf("2xx status code not colorized in green: %q", got)
+		}
+	})
+
+	t.Run("header keys are colorized", func(t *testing.T) {
+		cfg := &config{useColor: true}
+		input := []byte("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n")
+		got := string(cfg.colorizeHTTPResponse(input))
+		if !strings.Contains(got, colorCyan+"Content-Type"+colorReset) {
+			t.Errorf("header key not colorized in cyan: %q", got)
+		}
+	})
+
+	t.Run("body lines with colons are NOT colorized as headers", func(t *testing.T) {
+		cfg := &config{useColor: true}
+		bodyLine := "key: this looks like a header but is body"
+		input := []byte("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\n" + bodyLine)
+		got := string(cfg.colorizeHTTPResponse(input))
+
+		// The body line must appear verbatim — no ANSI codes injected into it
+		if !strings.Contains(got, "\r\n"+bodyLine) {
+			t.Errorf("body line was modified (possibly colorized): %q", got)
+		}
+	})
+
+	t.Run("multiple headers all colorized", func(t *testing.T) {
+		cfg := &config{useColor: true}
+		input := []byte("HTTP/1.1 404 Not Found\r\nContent-Type: text/html\r\nX-Request-Id: abc123\r\n\r\n")
+		got := string(cfg.colorizeHTTPResponse(input))
+		if !strings.Contains(got, colorYellow+"404"+colorReset) {
+			t.Errorf("4xx status not colorized in yellow: %q", got)
+		}
+		if !strings.Contains(got, colorCyan+"Content-Type"+colorReset) {
+			t.Errorf("Content-Type not colorized: %q", got)
+		}
+		if !strings.Contains(got, colorCyan+"X-Request-Id"+colorReset) {
+			t.Errorf("X-Request-Id not colorized: %q", got)
+		}
+	})
 }

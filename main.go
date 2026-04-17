@@ -173,6 +173,7 @@ func (cfg *config) colorizeHTTPResponse(response []byte) []byte {
 
 	lines := bytes.Split(response, []byte("\r\n"))
 	var colorized [][]byte
+	inHeaders := true // false once we've passed the blank separator line
 
 	for i, line := range lines {
 		lineStr := string(line)
@@ -194,16 +195,25 @@ func (cfg *config) colorizeHTTPResponse(response []byte) []byte {
 			}
 		}
 
-		// Headers (key: value)
-		if colonIdx := bytes.IndexByte(line, ':'); colonIdx != -1 && len(line) > 0 {
-			key := string(line[:colonIdx])
-			value := string(line[colonIdx:])
-			colored := cfg.colorHeaderKey(key) + value
-			colorized = append(colorized, []byte(colored))
+		// Blank line marks the end of headers
+		if inHeaders && len(line) == 0 {
+			inHeaders = false
+			colorized = append(colorized, line)
 			continue
 		}
 
-		// Empty line or other content
+		// Colorize header lines (key: value) only while in header section
+		if inHeaders {
+			if colonIdx := bytes.IndexByte(line, ':'); colonIdx != -1 {
+				key := string(line[:colonIdx])
+				value := string(line[colonIdx:])
+				colored := cfg.colorHeaderKey(key) + value
+				colorized = append(colorized, []byte(colored))
+				continue
+			}
+		}
+
+		// Body content or unrecognised lines — pass through unchanged
 		colorized = append(colorized, line)
 	}
 

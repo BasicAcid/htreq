@@ -80,7 +80,7 @@ The stdin-reading goroutine calls `scanner.Scan()` which blocks on `os.Stdin`. T
 
 After the status line, any line containing `:` is colorized as a header, including body lines if the header/body boundary isn't cleanly separated. The function doesn't track whether it's past the `\r\n\r\n` boundary.
 
-**Status:** Open
+**Status:** Fixed — added `inHeaders` flag; colorization of `key: value` lines stops after the first blank line, so body content is never miscoloured.
 
 ---
 
