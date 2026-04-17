@@ -2231,7 +2231,6 @@ func dumpRawFrame(data []byte, direction string, cfg *config) {
 	}
 }
 
-
 // WebSocket implementation
 
 func runWebSocket(request string, cfg *config, timing *timingInfo) error {

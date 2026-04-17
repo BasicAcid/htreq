@@ -420,7 +420,6 @@ func TestTLSVersionString(t *testing.T) {
 	}
 }
 
-
 // Test validateConfig function
 func TestValidateConfig(t *testing.T) {
 	tests := []struct {
@@ -536,14 +535,14 @@ func int64Ptr(i int64) *int64 {
 // Test parseRedirectLocation function
 func TestParseRedirectLocation(t *testing.T) {
 	tests := []struct {
-		name           string
-		location       string
-		currentTarget  string
-		currentUseTLS  bool
-		wantTarget     string
-		wantPath       string
-		wantUseTLS     bool
-		wantErr        bool
+		name          string
+		location      string
+		currentTarget string
+		currentUseTLS bool
+		wantTarget    string
+		wantPath      string
+		wantUseTLS    bool
+		wantErr       bool
 	}{
 		{
 			name:          "absolute path relative URL",
@@ -731,11 +730,11 @@ func TestPrefixConn(t *testing.T) {
 // fakeConn implements net.Conn using a bytes.Reader for the read side
 type fakeConn struct{ r *bytes.Reader }
 
-func (f fakeConn) Read(p []byte) (int, error)  { return f.r.Read(p) }
-func (f fakeConn) Write(p []byte) (int, error) { return len(p), nil }
-func (f fakeConn) Close() error                { return nil }
-func (f fakeConn) LocalAddr() net.Addr         { return nil }
-func (f fakeConn) RemoteAddr() net.Addr        { return nil }
+func (f fakeConn) Read(p []byte) (int, error)         { return f.r.Read(p) }
+func (f fakeConn) Write(p []byte) (int, error)        { return len(p), nil }
+func (f fakeConn) Close() error                       { return nil }
+func (f fakeConn) LocalAddr() net.Addr                { return nil }
+func (f fakeConn) RemoteAddr() net.Addr               { return nil }
 func (f fakeConn) SetDeadline(t time.Time) error      { return nil }
 func (f fakeConn) SetReadDeadline(t time.Time) error  { return nil }
 func (f fakeConn) SetWriteDeadline(t time.Time) error { return nil }
