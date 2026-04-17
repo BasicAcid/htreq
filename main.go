@@ -88,6 +88,7 @@ type config struct {
 	noColor         bool
 	useColor        bool // Computed: whether to actually use colors
 	noAltSvc        bool
+	deadline        time.Time // absolute deadline for the entire request; set in run()
 }
 
 // timingInfo holds detailed timing information for a request
@@ -462,6 +463,11 @@ func run(cfg *config) error {
 		return err
 	}
 
+	// Compute an absolute deadline for the entire request. All phases (DNS,
+	// TCP, TLS, send, receive) share this single budget so the worst case is
+	// exactly cfg.timeout, not a multiple of it.
+	cfg.deadline = time.Now().Add(cfg.timeout)
+
 	// Load environment file if specified
 	if cfg.envFile != "" {
 		if err := loadEnvFile(cfg.envFile); err != nil {
@@ -720,7 +726,6 @@ func runHTTP1(conn net.Conn, request string, cfg *config, timing *timingInfo) er
 	// Read first byte to capture TTFB timing
 	if timing != nil {
 		buf := make([]byte, 1)
-		conn.SetReadDeadline(time.Now().Add(cfg.timeout))
 		n, err := conn.Read(buf)
 		if err != nil {
 			return fmt.Errorf("read failed: %w", err)
@@ -781,7 +786,6 @@ func runHTTP1WithResponse(conn net.Conn, request string, cfg *config, timing *ti
 	// Read first byte to capture TTFB timing
 	if timing != nil {
 		buf := make([]byte, 1)
-		conn.SetReadDeadline(time.Now().Add(cfg.timeout))
 		n, err := conn.Read(buf)
 		if err != nil {
 			return nil, fmt.Errorf("read failed: %w", err)
@@ -894,11 +898,6 @@ func readResponseWithInfo(conn net.Conn, cfg *config) (*responseInfo, error) {
 	var bytesWritten int64
 
 	respInfo := &responseInfo{}
-
-	// Set read deadline for the entire response
-	if err := conn.SetReadDeadline(time.Now().Add(cfg.timeout)); err != nil {
-		return nil, fmt.Errorf("failed to set read deadline: %w", err)
-	}
 
 	// Read until we find the end of headers
 	chunk := make([]byte, defaultBufferSize) // Allocate once, reuse in loop
@@ -1072,7 +1071,7 @@ func connect(cfg *config, timing *timingInfo) (net.Conn, error) {
 		if !cfg.quiet {
 			fmt.Fprintf(os.Stderr, "[*] Connecting to Unix socket %s\n", cfg.unixSocket)
 		}
-		return net.DialTimeout("unix", cfg.unixSocket, cfg.timeout)
+		return net.DialTimeout("unix", cfg.unixSocket, time.Until(cfg.deadline))
 	}
 
 	// Parse host:port
@@ -1092,7 +1091,7 @@ func connect(cfg *config, timing *timingInfo) (net.Conn, error) {
 	dialAddr := net.JoinHostPort(host, port)
 	if timing != nil {
 		timing.dnsStart = time.Now()
-		resolveCtx, resolveCancel := context.WithTimeout(context.Background(), cfg.timeout)
+		resolveCtx, resolveCancel := context.WithDeadline(context.Background(), cfg.deadline)
 		defer resolveCancel()
 		addrs, err := (&net.Resolver{}).LookupHost(resolveCtx, host)
 		if err != nil {
@@ -1108,14 +1107,22 @@ func connect(cfg *config, timing *timingInfo) (net.Conn, error) {
 		timing.connectStart = time.Now()
 	}
 
-	// Connect TCP
-	conn, err := net.DialTimeout("tcp", dialAddr, cfg.timeout)
+	// Connect TCP using remaining budget from the shared deadline
+	conn, err := net.DialTimeout("tcp", dialAddr, time.Until(cfg.deadline))
 	if err != nil {
 		return nil, fmt.Errorf("connection failed: %w", err)
 	}
 
 	if timing != nil {
 		timing.connectDone = time.Now()
+	}
+
+	// Apply the shared deadline to the connection so all subsequent I/O
+	// (TLS handshake, request send, response read) is bounded by the same
+	// total budget rather than each phase getting its own fresh cfg.timeout.
+	if err := conn.SetDeadline(cfg.deadline); err != nil {
+		_ = conn.Close()
+		return nil, fmt.Errorf("failed to set connection deadline: %w", err)
 	}
 
 	// Wrap with TLS if needed
@@ -1181,7 +1188,6 @@ func parseTarget(target string, useTLS bool) (host, port string) {
 	}
 	return h, p
 }
-
 
 func loadEnvFile(path string) error {
 	file, err := os.Open(path)
@@ -1369,11 +1375,6 @@ func readResponse(conn net.Conn, cfg *config) error {
 	var contentLength *int64
 	chunked := false
 	var bytesWritten int64
-
-	// Set read deadline for the entire response
-	if err := conn.SetReadDeadline(time.Now().Add(cfg.timeout)); err != nil {
-		return fmt.Errorf("failed to set read deadline: %w", err)
-	}
 
 	// Read until we find the end of headers
 	chunk := make([]byte, defaultBufferSize) // Allocate once, reuse in loop
@@ -1685,10 +1686,10 @@ func runHTTP3(request string, cfg *config, timing *timingInfo) error {
 	}
 	defer transport.Close()
 
-	// Create HTTP client
+	// Create HTTP client using remaining budget from the shared deadline
 	client := &http.Client{
 		Transport: transport,
-		Timeout:   cfg.timeout,
+		Timeout:   time.Until(cfg.deadline),
 	}
 
 	// Create HTTP request
@@ -2260,7 +2261,7 @@ func runWebSocket(request string, cfg *config, timing *timingInfo) error {
 
 	// Create WebSocket dialer with custom TLS config if needed
 	dialer := &websocket.Dialer{
-		HandshakeTimeout: cfg.timeout,
+		HandshakeTimeout: time.Until(cfg.deadline),
 	}
 	if cfg.noVerify {
 		dialer.TLSClientConfig = &tls.Config{
