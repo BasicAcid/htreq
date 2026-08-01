@@ -4,17 +4,7 @@ This file tracks user-impacting gaps in the current implementation. Items are or
 
 ## Open issues
 
-### 1. HTTP/3 ignores redirect controls
-**Severity:** High
-**Location:** `runHTTP3`
-
-`http.Client` uses Go's default redirect policy. Therefore HTTP/3 redirects are followed even without `--follow`, and `--max-redirects` is ignored.
-
-**Recommended fix:** Set `CheckRedirect` to reject redirects unless `--follow` is enabled and enforce `maxRedirects`. Keep behavior consistent with HTTP/1.1.
-
----
-
-### 2. Retries can replay non-idempotent requests
+### 1. Retries can replay non-idempotent requests
 **Severity:** High
 **Location:** `main`, `isRetryableError`
 
@@ -24,7 +14,7 @@ The retry loop retries any request after a matching transport error. If a server
 
 ---
 
-### 3. HTTP/1 response headers have no size limit
+### 2. HTTP/1 response headers have no size limit
 **Severity:** High
 **Location:** `readResponse`, `readResponseWithInfo`
 
@@ -34,7 +24,7 @@ Both readers buffer incoming bytes until `\r\n\r\n` without a maximum header siz
 
 ---
 
-### 4. HTTP/2 lacks full frame fragmentation support
+### 3. HTTP/2 lacks full frame fragmentation support
 **Severity:** Medium
 **Location:** `runHTTP2`, `readHTTP2Response`
 
@@ -44,7 +34,7 @@ The implementation assumes a header block fits in a single HEADERS frame and a r
 
 ---
 
-### 5. Redirect URI resolution is incomplete
+### 4. Redirect URI resolution is incomplete
 **Severity:** Medium
 **Location:** `parseRedirectLocation`
 
@@ -54,7 +44,7 @@ Manual parsing does not correctly resolve relative paths, query-only and fragmen
 
 ---
 
-### 6. Documentation and tests need alignment
+### 5. Documentation and tests need alignment
 **Severity:** Medium
 **Location:** `README.md`, `AGENTS.md`, `Makefile`, `main_test.go`, `test/integration_test.sh`
 
@@ -66,6 +56,7 @@ The README's “no automatic behaviors” claim conflicts with HTTP/3's current 
 
 - HTTP/2 sends connection and stream `WINDOW_UPDATE` frames for received DATA.
 - HTTP/2 completes header-only responses and acknowledges only non-ACK SETTINGS frames.
+- HTTP/3 follows redirects only with `--follow`, enforces `--max-redirects`, and rejects HTTPS-to-HTTP downgrades.
 - Redirects reconnect when the target/TLS mode changes or the server sends `Connection: close`.
 - HTTP/1.1 redirects strip credential/token headers on an authority change and reject HTTPS-to-HTTP downgrades.
 - WebSocket sessions close the connection to unblock reads instead of retrying timed-out reads.

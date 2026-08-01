@@ -1755,8 +1755,9 @@ func runHTTP3(request string, cfg *config, timing *timingInfo) error {
 
 	// Create HTTP client using remaining budget from the shared deadline
 	client := &http.Client{
-		Transport: transport,
-		Timeout:   time.Until(cfg.deadline),
+		Transport:     transport,
+		Timeout:       time.Until(cfg.deadline),
+		CheckRedirect: http3RedirectPolicy(cfg),
 	}
 
 	// Create HTTP request
@@ -1873,6 +1874,23 @@ func runHTTP3(request string, cfg *config, timing *timingInfo) error {
 	}
 
 	return nil
+}
+
+func http3RedirectPolicy(cfg *config) func(req *http.Request, via []*http.Request) error {
+	return func(req *http.Request, via []*http.Request) error {
+		if !cfg.followRedirects {
+			// Return the redirect response to the caller unchanged when --follow
+			// was not requested, matching HTTP/1.1 behavior.
+			return http.ErrUseLastResponse
+		}
+		if len(via) > cfg.maxRedirects {
+			return fmt.Errorf("too many redirects (limit: %d)", cfg.maxRedirects)
+		}
+		if req.URL.Scheme != "https" {
+			return fmt.Errorf("refusing insecure HTTPS-to-HTTP redirect to %s", req.URL)
+		}
+		return nil
+	}
 }
 
 // HTTP/2 implementation

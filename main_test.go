@@ -801,6 +801,45 @@ func TestReadHTTP2Response(t *testing.T) {
 	})
 }
 
+func TestHTTP3RedirectPolicy(t *testing.T) {
+	newRequest := func(t *testing.T, rawURL string) *http.Request {
+		t.Helper()
+		req, err := http.NewRequest(http.MethodGet, rawURL, nil)
+		if err != nil {
+			t.Fatalf("NewRequest() error = %v", err)
+		}
+		return req
+	}
+
+	initial := newRequest(t, "https://example.com/start")
+	next := newRequest(t, "https://example.com/next")
+
+	t.Run("does not follow without flag", func(t *testing.T) {
+		policy := http3RedirectPolicy(&config{followRedirects: false, maxRedirects: 10})
+		if err := policy(next, []*http.Request{initial}); err != http.ErrUseLastResponse {
+			t.Errorf("redirect policy error = %v, want ErrUseLastResponse", err)
+		}
+	})
+
+	t.Run("enforces configured redirect limit", func(t *testing.T) {
+		policy := http3RedirectPolicy(&config{followRedirects: true, maxRedirects: 1})
+		if err := policy(next, []*http.Request{initial}); err != nil {
+			t.Fatalf("first redirect policy error = %v", err)
+		}
+		if err := policy(next, []*http.Request{initial, next}); err == nil {
+			t.Error("second redirect policy error = nil, want limit error")
+		}
+	})
+
+	t.Run("rejects HTTPS to HTTP downgrade", func(t *testing.T) {
+		policy := http3RedirectPolicy(&config{followRedirects: true, maxRedirects: 10})
+		insecure := newRequest(t, "http://example.com/next")
+		if err := policy(insecure, []*http.Request{initial}); err == nil {
+			t.Error("redirect policy error = nil, want downgrade error")
+		}
+	})
+}
+
 // Test prefixConn
 func TestPrefixConn(t *testing.T) {
 	t.Run("prefix fits in one read", func(t *testing.T) {
