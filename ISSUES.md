@@ -1,106 +1,104 @@
 # Known Issues & Improvements
 
-## Bugs / Correctness Issues
+This file tracks user-impacting gaps in the current implementation. Items are ordered by priority; line references identify the relevant functions rather than brittle exact line numbers.
 
-### 1. HTTP/2 missing WINDOW_UPDATE — hangs on large responses
+## Open issues
+
+### 1. Redirects can forward credentials across origins or downgrade TLS
 **Severity:** High
-**Location:** `main.go:2020-2145` (`readHTTP2Response`)
+**Location:** `runHTTP1WithRedirects`, `updateRequestPath`
 
-The HTTP/2 implementation reads DATA frames but never sends `WINDOW_UPDATE` frames. For responses larger than the initial flow-control window size (65535 bytes by default), the server will stop sending data, causing the connection to hang until timeout.
+`--follow` rebuilds a request from the original request and sends it to the redirect target. When the authority changes, this preserves `Authorization`, cookies, API-key headers, and credentials injected by `--user`. It also permits an HTTPS-to-HTTP redirect, exposing those values in plaintext.
 
-**Status:** Fixed — WINDOW_UPDATE frames now sent for both connection (stream 0) and stream after each DATA frame. Also handles incoming `WindowUpdateFrame` from server.
+**Recommended fix:** Resolve redirects with `net/url`; on an authority change, strip sensitive headers by default. Reject HTTPS-to-HTTP downgrades unless an explicit opt-in is added. Document any credential-forwarding policy.
 
 ---
 
-### 2. Redirect reuses stale TCP connection
+### 2. WebSocket sessions can fail or hang after short idle periods
+**Severity:** High
+**Location:** `handleWebSocketSession`
+
+The receive loop sets a 100 ms read deadline to poll for context cancellation. Gorilla WebSocket treats read errors, including timeouts, as terminal. Retrying after a timeout can leave the session coordinator blocked waiting on `done`.
+
+**Recommended fix:** Do not use short read deadlines for polling. Close the underlying connection on cancellation to unblock `ReadMessage`, treat every read error as terminal, and ensure every goroutine reports completion exactly once.
+
+---
+
+### 3. HTTP/2 mishandles valid header-only responses and SETTINGS ACKs
+**Severity:** High
+**Location:** `readHTTP2Response`
+
+A response ending on its `HEADERS` frame (`HEAD`, 204, 304, etc.) is not recognized as complete, so the client waits for another frame until the deadline. The client also ACKs incoming SETTINGS frames without checking whether they are already ACKs, violating HTTP/2 SETTINGS acknowledgement rules.
+
+**Recommended fix:** Return when a completed response header block has `END_STREAM`; write a SETTINGS ACK only when `!frame.IsAck()`.
+
+---
+
+### 4. HTTP/3 ignores redirect controls
+**Severity:** High
+**Location:** `runHTTP3`
+
+`http.Client` uses Go's default redirect policy. Therefore HTTP/3 redirects are followed even without `--follow`, and `--max-redirects` is ignored.
+
+**Recommended fix:** Set `CheckRedirect` to reject redirects unless `--follow` is enabled and enforce `maxRedirects`. Keep behavior consistent with HTTP/1.1.
+
+---
+
+### 5. Retries can replay non-idempotent requests
+**Severity:** High
+**Location:** `main`, `isRetryableError`
+
+The retry loop retries any request after a matching transport error. If a server processed a POST/PATCH but the response was lost, retrying can duplicate the side effect.
+
+**Recommended fix:** Retry only idempotent methods by default. Require an explicit unsafe-retry opt-in for other methods and warn before replaying a request body.
+
+---
+
+### 6. HTTP/1 response headers have no size limit
+**Severity:** High
+**Location:** `readResponse`, `readResponseWithInfo`
+
+Both readers buffer incoming bytes until `\r\n\r\n` without a maximum header size. A peer that never finishes headers can cause unbounded memory growth; `--max-bytes` does not protect this buffer.
+
+**Recommended fix:** Add a configurable or conservative maximum response-header size and fail with a clear error once it is exceeded. Use bounded/streaming reads where possible.
+
+---
+
+### 7. HTTP/2 lacks full frame fragmentation support
 **Severity:** Medium
-**Location:** `main.go:603-669` (`runHTTP1WithRedirects`)
+**Location:** `runHTTP2`, `readHTTP2Response`
 
-When following redirects to the same host, the code reuses the same `conn` for subsequent requests. HTTP/1.1 connections are not guaranteed to be reusable after reading a response (the server may send `Connection: close` or just close). The code never checks if the connection is still alive. If the server closed it, the next Write/Read fails with a confusing error.
+The implementation assumes a header block fits in a single HEADERS frame and a request body fits in one DATA frame. It does not handle CONTINUATION frames or peer frame-size constraints, causing failures with large headers/bodies or fragmented responses.
 
-**Fix:** Either always reconnect on each redirect, or check the `Connection` response header.
-
-**Status:** Fixed — reconnect when target changes, TLS requirement changes, or server sends `Connection: close`. `parseRedirectLocation` now returns the scheme so http→https upgrades are handled correctly. Connection ownership is tracked so the caller's deferred close is never double-fired.
+**Recommended fix:** Accumulate HEADERS/CONTINUATION fragments until `END_HEADERS`; split outbound headers and DATA according to negotiated peer limits.
 
 ---
 
-### 3. Double DNS lookup in `connect()`
+### 8. Redirect URI resolution is incomplete
 **Severity:** Medium
-**Location:** `main.go:1069-1088`
+**Location:** `parseRedirectLocation`
 
-`connect()` first calls `resolver.LookupHost()` for timing, then `net.DialTimeout()` which does its own DNS resolution internally. The two lookups may resolve to different IPs. Use `net.Dialer` with a custom resolver or `net.Dialer.ControlContext` to hook into the connection lifecycle for timing without duplicate work.
+Manual parsing does not correctly resolve relative paths, query-only and fragment references, scheme-relative URLs, mixed-case schemes, or all absolute URLs.
 
-**Status:** Fixed — DNS is now resolved explicitly only when timing is requested; the resolved IP is used directly for the TCP dial so no second lookup occurs. Without timing, `DialTimeout` handles resolution as a single step.
+**Recommended fix:** Represent the current request as a `net/url.URL`, resolve `Location` with `ResolveReference`, and use normalized resolved URLs for redirect-loop detection.
 
 ---
 
-### 4. HTTP/2 duplicate headers lost
+### 9. Documentation and tests need alignment
 **Severity:** Medium
-**Location:** `main.go:2024-2027` (`readHTTP2Response`)
+**Location:** `README.md`, `AGENTS.md`, `Makefile`, `main_test.go`, `test/integration_test.sh`
 
-HTTP/2 can have duplicate headers (e.g., `set-cookie`). Storing response headers in `map[string]string` means only the last value per key is kept. Should use `map[string][]string` or `http.Header`.
+The README's “no automatic behaviors” claim conflicts with HTTP/3's current implicit redirects. `AGENTS.md` still says the program is about 1350 lines with no unit tests. Default `make test` does not run integration tests, and the existing integration suite relies on external services. Unit coverage is low for protocol and error paths.
 
-**Status:** Fixed — `responseHeaders` is now `map[string][]string`; the HPACK decoder appends rather than overwrites, and the print loop emits one line per value.
+**Recommended fix:** Update documentation after redirect behavior is fixed; make local deterministic integration tests part of the normal test target; add tests for every issue above.
 
----
+## Recently resolved
 
-### 5. `prefixConn` prefix truncation (latent)
-**Severity:** Low
-**Location:** `main.go:1035-1042`
-
-If the prefix is larger than the caller's buffer `p`, only `copy(p, c.prefix)` bytes are returned and the rest of the prefix is lost because `c.used` is set to `true` unconditionally. Currently the prefix is always exactly 1 byte (for TTFB timing), so this works in practice, but it's a latent bug.
-
-**Status:** Fixed — replaced `used bool` with `pos int`; `Read` copies from `prefix[pos:]` and advances the offset, so callers with a small buffer get the prefix in multiple reads without data loss.
-
----
-
-### 6. Custom `min()` shadows Go 1.21+ builtin
-**Severity:** Low
-**Location:** `main.go:2188-2193`
-
-Go 1.21+ has a builtin `min()`. With `go 1.24.4`, the custom definition is unnecessary and could confuse contributors. Remove it and use the builtin.
-
-**Status:** Fixed — removed custom `min()` and its test; the Go 1.21+ builtin is used directly.
-
----
-
-### 7. WebSocket stdin goroutine can't be interrupted
-**Severity:** Low
-**Location:** `main.go:2390` (`handleWebSocketSession`)
-
-The stdin-reading goroutine calls `scanner.Scan()` which blocks on `os.Stdin`. The `select` with `ctx.Done()` only runs between iterations. If stdin is blocked waiting for input, `cancel()` won't unblock it. The goroutine hangs until the 300ms timeout at line 2429.
-
-**Status:** Fixed — scanner moved to a dedicated inner goroutine feeding a `lines` channel; the outer goroutine selects between that channel and `ctx.Done()` so cancellation is immediate.
-
----
-
-### 8. Response colorizer doesn't track header/body boundary
-**Severity:** Low
-**Location:** `main.go:198` (`colorizeHTTPResponse`)
-
-After the status line, any line containing `:` is colorized as a header, including body lines if the header/body boundary isn't cleanly separated. The function doesn't track whether it's past the `\r\n\r\n` boundary.
-
-**Status:** Fixed — added `inHeaders` flag; colorization of `key: value` lines stops after the first blank line, so body content is never miscoloured.
-
----
-
-## Design Suggestions
-
-### 9. Timeout applies per-phase, not total
-**Location:** `main.go:324, 874, 1088`
-
-The same `cfg.timeout` is used independently for DNS, TCP connect, TLS handshake, and response reading. In the worst case, a request could take up to `4 * timeout`. A total deadline would be more intuitive.
-
----
-
-### 10. Three functions for host:port parsing
-**Location:** `main.go:1147, 1161, 1170`
-
-`parseTarget`, `extractPort`, and `splitHostPort` all wrap `net.SplitHostPort` with slightly different defaults. `splitHostPort` is used only once (in `runHTTP3`). Consider consolidating.
-
----
-
-### 11. `loadEnvFile` sets real process env vars without prefix check
-**Location:** `main.go:1218`
-
-`os.Setenv` affects the entire process environment. The security warning about non-`HTREQ_` prefixed vars (line 1291) is undermined by the fact that `loadEnvFile` itself sets arbitrary env vars without any prefix check.
+- HTTP/2 sends connection and stream `WINDOW_UPDATE` frames for received DATA.
+- Redirects reconnect when the target/TLS mode changes or the server sends `Connection: close`.
+- Timed connections avoid a second DNS lookup.
+- HTTP/2 preserves duplicate response headers.
+- `prefixConn` preserves prefixes across short reads.
+- The request deadline covers DNS, TCP, TLS, send, and receive phases.
+- Response colorization stops at the header/body boundary.
+- Environment-file expansion warns for non-`HTREQ_` variables.
