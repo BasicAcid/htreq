@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"golang.org/x/net/http2"
+	"golang.org/x/net/http2/hpack"
 )
 
 // Test parseTarget function
@@ -714,6 +716,89 @@ func TestWebSocketSessionHandlesIdleConnection(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("idle WebSocket session did not finish after server close")
 	}
+}
+
+func TestReadHTTP2Response(t *testing.T) {
+	newHeaderBlock := func(t *testing.T) []byte {
+		t.Helper()
+		var block bytes.Buffer
+		encoder := hpack.NewEncoder(&block)
+		if err := encoder.WriteField(hpack.HeaderField{Name: ":status", Value: "204"}); err != nil {
+			t.Fatalf("WriteField() error = %v", err)
+		}
+		return block.Bytes()
+	}
+
+	t.Run("returns when headers end the stream", func(t *testing.T) {
+		client, server := net.Pipe()
+		defer client.Close()
+		defer server.Close()
+
+		result := make(chan error, 1)
+		go func() {
+			result <- readHTTP2Response(http2.NewFramer(client, client), &config{bodyOnly: true}, nil)
+		}()
+
+		serverFramer := http2.NewFramer(server, server)
+		if err := serverFramer.WriteHeaders(http2.HeadersFrameParam{
+			StreamID:      1,
+			BlockFragment: newHeaderBlock(t),
+			EndHeaders:    true,
+			EndStream:     true,
+		}); err != nil {
+			t.Fatalf("WriteHeaders() error = %v", err)
+		}
+
+		select {
+		case err := <-result:
+			if err != nil {
+				t.Errorf("readHTTP2Response() error = %v", err)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("readHTTP2Response() did not finish after END_STREAM headers")
+		}
+	})
+
+	t.Run("does not acknowledge a settings acknowledgement", func(t *testing.T) {
+		var input, output bytes.Buffer
+		serverFramer := http2.NewFramer(&input, nil)
+		if err := serverFramer.WriteSettings(); err != nil {
+			t.Fatalf("WriteSettings() error = %v", err)
+		}
+		if err := serverFramer.WriteSettingsAck(); err != nil {
+			t.Fatalf("WriteSettingsAck() error = %v", err)
+		}
+		if err := serverFramer.WriteHeaders(http2.HeadersFrameParam{
+			StreamID:      1,
+			BlockFragment: newHeaderBlock(t),
+			EndHeaders:    true,
+			EndStream:     true,
+		}); err != nil {
+			t.Fatalf("WriteHeaders() error = %v", err)
+		}
+
+		if err := readHTTP2Response(http2.NewFramer(&output, bytes.NewReader(input.Bytes())), &config{bodyOnly: true}, nil); err != nil {
+			t.Fatalf("readHTTP2Response() error = %v", err)
+		}
+
+		ackReader := http2.NewFramer(nil, bytes.NewReader(output.Bytes()))
+		acks := 0
+		for {
+			frame, err := ackReader.ReadFrame()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				t.Fatalf("ReadFrame() error = %v", err)
+			}
+			if settings, ok := frame.(*http2.SettingsFrame); ok && settings.IsAck() {
+				acks++
+			}
+		}
+		if acks != 1 {
+			t.Errorf("SETTINGS ACK count = %d, want 1", acks)
+		}
+	})
 }
 
 // Test prefixConn

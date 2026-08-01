@@ -2113,9 +2113,12 @@ func readHTTP2Response(framer *http2.Framer, cfg *config, timing *timingInfo) er
 
 		switch f := frame.(type) {
 		case *http2.SettingsFrame:
-			// Respond with SETTINGS ACK
-			if err := framer.WriteSettingsAck(); err != nil {
-				return fmt.Errorf("failed to write SETTINGS ACK: %w", err)
+			// Only non-ACK SETTINGS frames require an acknowledgement. ACKing an
+			// ACK violates the protocol and can make the peer close the connection.
+			if !f.IsAck() {
+				if err := framer.WriteSettingsAck(); err != nil {
+					return fmt.Errorf("failed to write SETTINGS ACK: %w", err)
+				}
 			}
 
 		case *http2.WindowUpdateFrame:
@@ -2163,7 +2166,7 @@ func readHTTP2Response(framer *http2.Framer, cfg *config, timing *timingInfo) er
 				}
 			}
 
-			if cfg.headersOnly {
+			if cfg.headersOnly || f.StreamEnded() {
 				if timing != nil && timing.responseDone.IsZero() {
 					timing.responseDone = time.Now()
 				}
