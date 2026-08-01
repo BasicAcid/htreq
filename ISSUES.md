@@ -4,17 +4,7 @@ This file tracks user-impacting gaps in the current implementation. Items are or
 
 ## Open issues
 
-### 1. Redirects can forward credentials across origins or downgrade TLS
-**Severity:** High
-**Location:** `runHTTP1WithRedirects`, `updateRequestPath`
-
-`--follow` rebuilds a request from the original request and sends it to the redirect target. When the authority changes, this preserves `Authorization`, cookies, API-key headers, and credentials injected by `--user`. It also permits an HTTPS-to-HTTP redirect, exposing those values in plaintext.
-
-**Recommended fix:** Resolve redirects with `net/url`; on an authority change, strip sensitive headers by default. Reject HTTPS-to-HTTP downgrades unless an explicit opt-in is added. Document any credential-forwarding policy.
-
----
-
-### 2. WebSocket sessions can fail or hang after short idle periods
+### 1. WebSocket sessions can fail or hang after short idle periods
 **Severity:** High
 **Location:** `handleWebSocketSession`
 
@@ -24,7 +14,7 @@ The receive loop sets a 100 ms read deadline to poll for context cancellation. G
 
 ---
 
-### 3. HTTP/2 mishandles valid header-only responses and SETTINGS ACKs
+### 2. HTTP/2 mishandles valid header-only responses and SETTINGS ACKs
 **Severity:** High
 **Location:** `readHTTP2Response`
 
@@ -34,7 +24,7 @@ A response ending on its `HEADERS` frame (`HEAD`, 204, 304, etc.) is not recogni
 
 ---
 
-### 4. HTTP/3 ignores redirect controls
+### 3. HTTP/3 ignores redirect controls
 **Severity:** High
 **Location:** `runHTTP3`
 
@@ -44,7 +34,7 @@ A response ending on its `HEADERS` frame (`HEAD`, 204, 304, etc.) is not recogni
 
 ---
 
-### 5. Retries can replay non-idempotent requests
+### 4. Retries can replay non-idempotent requests
 **Severity:** High
 **Location:** `main`, `isRetryableError`
 
@@ -54,7 +44,7 @@ The retry loop retries any request after a matching transport error. If a server
 
 ---
 
-### 6. HTTP/1 response headers have no size limit
+### 5. HTTP/1 response headers have no size limit
 **Severity:** High
 **Location:** `readResponse`, `readResponseWithInfo`
 
@@ -64,7 +54,7 @@ Both readers buffer incoming bytes until `\r\n\r\n` without a maximum header siz
 
 ---
 
-### 7. HTTP/2 lacks full frame fragmentation support
+### 6. HTTP/2 lacks full frame fragmentation support
 **Severity:** Medium
 **Location:** `runHTTP2`, `readHTTP2Response`
 
@@ -74,7 +64,7 @@ The implementation assumes a header block fits in a single HEADERS frame and a r
 
 ---
 
-### 8. Redirect URI resolution is incomplete
+### 7. Redirect URI resolution is incomplete
 **Severity:** Medium
 **Location:** `parseRedirectLocation`
 
@@ -84,7 +74,7 @@ Manual parsing does not correctly resolve relative paths, query-only and fragmen
 
 ---
 
-### 9. Documentation and tests need alignment
+### 8. Documentation and tests need alignment
 **Severity:** Medium
 **Location:** `README.md`, `AGENTS.md`, `Makefile`, `main_test.go`, `test/integration_test.sh`
 
@@ -96,6 +86,7 @@ The README's “no automatic behaviors” claim conflicts with HTTP/3's current 
 
 - HTTP/2 sends connection and stream `WINDOW_UPDATE` frames for received DATA.
 - Redirects reconnect when the target/TLS mode changes or the server sends `Connection: close`.
+- HTTP/1.1 redirects strip credential/token headers on an authority change and reject HTTPS-to-HTTP downgrades.
 - Timed connections avoid a second DNS lookup.
 - HTTP/2 preserves duplicate response headers.
 - `prefixConn` preserves prefixes across short reads.

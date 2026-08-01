@@ -611,7 +611,7 @@ func run(cfg *config) error {
 }
 
 // runHTTP1WithRedirects handles HTTP/1.1 with automatic redirect following
-func runHTTP1WithRedirects(initialConn net.Conn, initialRequest string, cfg *config, timing *timingInfo) error {
+func runHTTP1WithRedirects(initialConn net.Conn, request string, cfg *config, timing *timingInfo) error {
 	conn := initialConn
 	ownConn := false // whether we opened conn ourselves (vs. received from caller)
 
@@ -624,7 +624,6 @@ func runHTTP1WithRedirects(initialConn net.Conn, initialRequest string, cfg *con
 		}
 	}()
 
-	request := initialRequest
 	redirectCount := 0
 	visited := make(map[string]bool) // Track visited URLs to detect loops
 
@@ -672,6 +671,18 @@ func runHTTP1WithRedirects(initialConn net.Conn, initialRequest string, cfg *con
 			return fmt.Errorf("invalid redirect location: %w", err)
 		}
 
+		// Never follow a TLS-to-plaintext redirect: it could disclose credentials
+		// or other request data that was protected on the original connection.
+		if cfg.useTLS && !newUseTLS {
+			return fmt.Errorf("refusing insecure HTTPS-to-HTTP redirect to %s", respInfo.location)
+		}
+
+		// Credentials and tokens are scoped to an origin. Do not forward them to
+		// a different authority, even when the redirect is otherwise allowed.
+		if !sameRedirectAuthority(cfg.target, cfg.useTLS, newTarget, newUseTLS) {
+			request = stripSensitiveRedirectHeaders(request)
+		}
+
 		// Reconnect when: target changed, TLS requirement changed, or server
 		// indicated it closed the connection via "Connection: close".
 		connectionClose := strings.Contains(strings.ToLower(respInfo.headers), "connection: close")
@@ -690,8 +701,9 @@ func runHTTP1WithRedirects(initialConn net.Conn, initialRequest string, cfg *con
 			ownConn = true
 		}
 
-		// Build new request with updated path and host
-		request, err = updateRequestPath(initialRequest, newPath, newTarget)
+		// Build the next request from the current request. This preserves any
+		// sensitive-header stripping performed for an earlier cross-origin hop.
+		request, err = updateRequestPath(request, newPath, newTarget)
 		if err != nil {
 			return fmt.Errorf("failed to update request: %w", err)
 		}
@@ -858,6 +870,59 @@ func parseRedirectLocation(location, currentTarget string, currentUseTLS bool) (
 	}
 
 	return newTarget, newPath, newUseTLS, nil
+}
+
+func sameRedirectAuthority(currentTarget string, currentUseTLS bool, newTarget string, newUseTLS bool) bool {
+	if currentUseTLS != newUseTLS {
+		return false
+	}
+
+	currentHost, currentPort := parseTarget(currentTarget, currentUseTLS)
+	newHost, newPort := parseTarget(newTarget, newUseTLS)
+	return strings.EqualFold(strings.TrimSuffix(currentHost, "."), strings.TrimSuffix(newHost, ".")) && currentPort == newPort
+}
+
+// stripSensitiveRedirectHeaders removes credentials and common token headers
+// before a request is forwarded to another authority.
+func stripSensitiveRedirectHeaders(request string) string {
+	lines := strings.Split(request, "\r\n")
+	filtered := make([]string, 0, len(lines))
+	removed := false
+	inHeaders := true
+
+	for _, line := range lines {
+		if inHeaders && line == "" {
+			inHeaders = false
+			filtered = append(filtered, line)
+			continue
+		}
+		if inHeaders {
+			if colon := strings.IndexByte(line, ':'); colon != -1 && isSensitiveRedirectHeader(line[:colon]) {
+				removed = true
+				continue
+			}
+		}
+		filtered = append(filtered, line)
+	}
+
+	if !removed {
+		return request
+	}
+	return strings.Join(filtered, "\r\n")
+}
+
+func isSensitiveRedirectHeader(name string) bool {
+	name = strings.ToLower(strings.TrimSpace(name))
+	switch name {
+	case "authorization", "proxy-authorization", "cookie", "cookie2", "x-api-key", "x-auth-token", "x-access-token", "x-amz-security-token":
+		return true
+	}
+
+	// Catch common custom naming conventions without requiring users to know
+	// every vendor-specific token header.
+	return strings.Contains(name, "authorization") || strings.Contains(name, "token") ||
+		strings.Contains(name, "api-key") || strings.Contains(name, "apikey") ||
+		strings.Contains(name, "secret")
 }
 
 // updateRequestPath updates the request with a new path and host

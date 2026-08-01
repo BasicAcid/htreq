@@ -625,6 +625,49 @@ func TestParseRedirectLocation(t *testing.T) {
 	}
 }
 
+func TestSameRedirectAuthority(t *testing.T) {
+	tests := []struct {
+		name                               string
+		currentTarget, newTarget           string
+		currentUseTLS, newUseTLS, wantSame bool
+	}{
+		{"same HTTPS default port", "example.com", "EXAMPLE.com:443", true, true, true},
+		{"different host", "example.com", "other.example", true, true, false},
+		{"different port", "example.com", "example.com:8443", true, true, false},
+		{"different scheme", "example.com", "example.com", true, false, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := sameRedirectAuthority(tt.currentTarget, tt.currentUseTLS, tt.newTarget, tt.newUseTLS); got != tt.wantSame {
+				t.Errorf("sameRedirectAuthority() = %v, want %v", got, tt.wantSame)
+			}
+		})
+	}
+}
+
+func TestStripSensitiveRedirectHeaders(t *testing.T) {
+	request := "GET / HTTP/1.1\r\n" +
+		"Host: example.com\r\n" +
+		"Authorization: Bearer secret\r\n" +
+		"Cookie: session=secret\r\n" +
+		"X-API-Key: secret\r\n" +
+		"X-Custom-Token: secret\r\n" +
+		"Accept: application/json\r\n\r\n" +
+		"body with Authorization: not-a-header"
+
+	got := stripSensitiveRedirectHeaders(request)
+	headers, _, _ := strings.Cut(got, "\r\n\r\n")
+	for _, header := range []string{"Authorization:", "Cookie:", "X-API-Key:", "X-Custom-Token:"} {
+		if strings.Contains(headers, header) {
+			t.Errorf("stripSensitiveRedirectHeaders() retained %q: %q", header, got)
+		}
+	}
+	if !strings.Contains(got, "Host: example.com\r\nAccept: application/json\r\n\r\nbody with Authorization: not-a-header") {
+		t.Errorf("stripSensitiveRedirectHeaders() modified safe headers or body: %q", got)
+	}
+}
+
 // Test prefixConn
 func TestPrefixConn(t *testing.T) {
 	t.Run("prefix fits in one read", func(t *testing.T) {
