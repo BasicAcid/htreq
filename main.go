@@ -34,9 +34,6 @@ const defaultBufferSize = 4096
 // Maximum allowed chunk size (100MB) to prevent DoS/OOM attacks
 const maxChunkSize = 100 * 1024 * 1024
 
-// WebSocket read deadline for context checking
-const wsReadDeadline = 100 * time.Millisecond
-
 // Minimum length for quoted strings in environment files
 const minQuotedStringLen = 2
 
@@ -2392,97 +2389,64 @@ func runWebSocket(request string, cfg *config, timing *timingInfo) error {
 }
 
 func handleWebSocketSession(conn *websocket.Conn, cfg *config) error {
-	defer func() {
-		// Close connection when function exits
-		conn.Close()
-	}()
+	return handleWebSocketSessionWithInput(conn, cfg, os.Stdin)
+}
 
-	// Create context for goroutine coordination
+// handleWebSocketSessionWithInput runs an interactive WebSocket session. Closing
+// conn is the cancellation mechanism for a blocked ReadMessage call: Gorilla
+// WebSocket treats read errors as terminal, so read deadlines must not be used
+// as a context-polling mechanism.
+func handleWebSocketSessionWithInput(conn *websocket.Conn, cfg *config, input io.Reader) error {
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel() // Ensure all goroutines are stopped
+	defer cancel()
 
-	// Channel to signal completion (buffer size 2 for both goroutines)
 	done := make(chan error, 2)
-
-	// WaitGroup to ensure both goroutines have finished
 	var wg sync.WaitGroup
 	wg.Add(2)
 
-	// Start reading messages from WebSocket
 	go func() {
 		defer wg.Done()
-		defer cancel() // Cancel context when this goroutine exits
-		defer func() {
-			// Recover from any panic (e.g., "repeated read on failed websocket connection")
-			if r := recover(); r != nil {
-				// Panic occurred, likely due to reading after connection close
-				// This is a known issue with gorilla/websocket - just exit gracefully
-				if !cfg.quiet {
-					fmt.Fprintf(os.Stderr, "[*] Reader stopped after connection close\n")
-				}
-			}
-		}()
-
 		for {
-			select {
-			case <-ctx.Done():
-				// Context cancelled, exit cleanly
+			messageType, message, err := conn.ReadMessage()
+			if err != nil {
+				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseNormalClosure) {
+					done <- fmt.Errorf("websocket read error: %w", err)
+				} else {
+					done <- nil
+				}
 				return
-			default:
-				// Set read deadline to allow periodic context checks
-				if err := conn.SetReadDeadline(time.Now().Add(wsReadDeadline)); err != nil {
-					// Connection already closed
-					return
-				}
-
-				messageType, message, err := conn.ReadMessage()
-				if err != nil {
-					// Check if it's a timeout (expected for context checking)
-					if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-						continue // Continue loop to check context
-					}
-					// Real error or connection closed
-					if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseNormalClosure) {
-						// Only report unexpected errors
-						done <- fmt.Errorf("websocket read error: %w", err)
-					} else {
-						// Normal closure or expected close
-						done <- nil
-					}
-					return
-				}
-
-				// Print received message
-				if !cfg.quiet {
-					typeStr := "TEXT"
-					if messageType == websocket.BinaryMessage {
-						typeStr = "BINARY"
-					}
-					fmt.Fprintf(os.Stderr, "\n[*] Received %s message (%d bytes)\n", typeStr, len(message))
-				}
-				fmt.Printf("%s\n", message)
 			}
+
+			if !cfg.quiet {
+				typeStr := "TEXT"
+				if messageType == websocket.BinaryMessage {
+					typeStr = "BINARY"
+				}
+				fmt.Fprintf(os.Stderr, "\n[*] Received %s message (%d bytes)\n", typeStr, len(message))
+			}
+			fmt.Printf("%s\n", message)
 		}
 	}()
 
-	// Read from stdin and send messages.
-	// scanner.Scan() blocks and cannot be interrupted by a context, so we run it
-	// in a dedicated inner goroutine that feeds lines into a channel. The outer
-	// goroutine selects between that channel and ctx.Done(), allowing it to exit
-	// immediately when the reader goroutine or the caller cancels the context.
 	go func() {
 		defer wg.Done()
-		defer cancel()
 
 		lines := make(chan string)
 		scanErrc := make(chan error, 1)
 		go func() {
-			scanner := bufio.NewScanner(os.Stdin)
+			defer close(lines)
+			scanner := bufio.NewScanner(input)
 			for scanner.Scan() {
-				lines <- scanner.Text()
+				select {
+				case lines <- scanner.Text():
+				case <-ctx.Done():
+					return
+				}
 			}
-			scanErrc <- scanner.Err()
-			close(lines)
+			select {
+			case scanErrc <- scanner.Err():
+			case <-ctx.Done():
+			}
 		}()
 
 		for {
@@ -2491,7 +2455,6 @@ func handleWebSocketSession(conn *websocket.Conn, cfg *config) error {
 				return
 			case text, ok := <-lines:
 				if !ok {
-					// Scanner finished (EOF or Ctrl+D)
 					if err := <-scanErrc; err != nil {
 						done <- fmt.Errorf("stdin read error: %w", err)
 					} else {
@@ -2510,31 +2473,10 @@ func handleWebSocketSession(conn *websocket.Conn, cfg *config) error {
 		}
 	}()
 
-	// Wait for first goroutine to complete
 	err := <-done
-
-	// Cancel context to signal other goroutine to stop
 	cancel()
-
-	// Wait for both goroutines to finish with timeout
-	waitDone := make(chan struct{})
-	go func() {
-		wg.Wait()
-		close(waitDone)
-	}()
-
-	select {
-	case <-waitDone:
-		// Both goroutines finished cleanly
-	case <-time.After(wsReadDeadline * 3):
-		// Timeout waiting for goroutines - they'll be cleaned up by defer
-		if !cfg.quiet {
-			fmt.Fprintf(os.Stderr, "[!] Warning: timeout waiting for goroutines to finish\n")
-		}
-	}
-
-	// Send close message (best effort)
-	conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
+	_ = conn.Close() // Unblock a reader or writer that is waiting on the network.
+	wg.Wait()
 
 	if !cfg.quiet {
 		fmt.Fprintf(os.Stderr, "\n[*] WebSocket connection closed\n")

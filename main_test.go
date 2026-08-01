@@ -4,10 +4,14 @@ import (
 	"bytes"
 	"io"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/gorilla/websocket"
 )
 
 // Test parseTarget function
@@ -665,6 +669,50 @@ func TestStripSensitiveRedirectHeaders(t *testing.T) {
 	}
 	if !strings.Contains(got, "Host: example.com\r\nAccept: application/json\r\n\r\nbody with Authorization: not-a-header") {
 		t.Errorf("stripSensitiveRedirectHeaders() modified safe headers or body: %q", got)
+	}
+}
+
+func TestWebSocketSessionHandlesIdleConnection(t *testing.T) {
+	upgrader := websocket.Upgrader{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		serverConn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			t.Errorf("Upgrade() error = %v", err)
+			return
+		}
+		defer serverConn.Close()
+
+		// Stay idle for longer than the former 100 ms polling deadline, then
+		// perform a normal close. The client must not hang or reuse a timed-out read.
+		time.Sleep(250 * time.Millisecond)
+		_ = serverConn.WriteControl(
+			websocket.CloseMessage,
+			websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""),
+			time.Now().Add(time.Second),
+		)
+	}))
+	defer server.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
+	clientConn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("Dial() error = %v", err)
+	}
+
+	inputReader, inputWriter := io.Pipe()
+	defer inputWriter.Close()
+	result := make(chan error, 1)
+	go func() {
+		result <- handleWebSocketSessionWithInput(clientConn, &config{quiet: true}, inputReader)
+	}()
+
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Errorf("handleWebSocketSessionWithInput() error = %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("idle WebSocket session did not finish after server close")
 	}
 }
 

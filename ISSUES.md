@@ -4,17 +4,7 @@ This file tracks user-impacting gaps in the current implementation. Items are or
 
 ## Open issues
 
-### 1. WebSocket sessions can fail or hang after short idle periods
-**Severity:** High
-**Location:** `handleWebSocketSession`
-
-The receive loop sets a 100 ms read deadline to poll for context cancellation. Gorilla WebSocket treats read errors, including timeouts, as terminal. Retrying after a timeout can leave the session coordinator blocked waiting on `done`.
-
-**Recommended fix:** Do not use short read deadlines for polling. Close the underlying connection on cancellation to unblock `ReadMessage`, treat every read error as terminal, and ensure every goroutine reports completion exactly once.
-
----
-
-### 2. HTTP/2 mishandles valid header-only responses and SETTINGS ACKs
+### 1. HTTP/2 mishandles valid header-only responses and SETTINGS ACKs
 **Severity:** High
 **Location:** `readHTTP2Response`
 
@@ -24,7 +14,7 @@ A response ending on its `HEADERS` frame (`HEAD`, 204, 304, etc.) is not recogni
 
 ---
 
-### 3. HTTP/3 ignores redirect controls
+### 2. HTTP/3 ignores redirect controls
 **Severity:** High
 **Location:** `runHTTP3`
 
@@ -34,7 +24,7 @@ A response ending on its `HEADERS` frame (`HEAD`, 204, 304, etc.) is not recogni
 
 ---
 
-### 4. Retries can replay non-idempotent requests
+### 3. Retries can replay non-idempotent requests
 **Severity:** High
 **Location:** `main`, `isRetryableError`
 
@@ -44,7 +34,7 @@ The retry loop retries any request after a matching transport error. If a server
 
 ---
 
-### 5. HTTP/1 response headers have no size limit
+### 4. HTTP/1 response headers have no size limit
 **Severity:** High
 **Location:** `readResponse`, `readResponseWithInfo`
 
@@ -54,7 +44,7 @@ Both readers buffer incoming bytes until `\r\n\r\n` without a maximum header siz
 
 ---
 
-### 6. HTTP/2 lacks full frame fragmentation support
+### 5. HTTP/2 lacks full frame fragmentation support
 **Severity:** Medium
 **Location:** `runHTTP2`, `readHTTP2Response`
 
@@ -64,7 +54,7 @@ The implementation assumes a header block fits in a single HEADERS frame and a r
 
 ---
 
-### 7. Redirect URI resolution is incomplete
+### 6. Redirect URI resolution is incomplete
 **Severity:** Medium
 **Location:** `parseRedirectLocation`
 
@@ -74,7 +64,7 @@ Manual parsing does not correctly resolve relative paths, query-only and fragmen
 
 ---
 
-### 8. Documentation and tests need alignment
+### 7. Documentation and tests need alignment
 **Severity:** Medium
 **Location:** `README.md`, `AGENTS.md`, `Makefile`, `main_test.go`, `test/integration_test.sh`
 
@@ -87,6 +77,7 @@ The README's “no automatic behaviors” claim conflicts with HTTP/3's current 
 - HTTP/2 sends connection and stream `WINDOW_UPDATE` frames for received DATA.
 - Redirects reconnect when the target/TLS mode changes or the server sends `Connection: close`.
 - HTTP/1.1 redirects strip credential/token headers on an authority change and reject HTTPS-to-HTTP downgrades.
+- WebSocket sessions close the connection to unblock reads instead of retrying timed-out reads.
 - Timed connections avoid a second DNS lookup.
 - HTTP/2 preserves duplicate response headers.
 - `prefixConn` preserves prefixes across short reads.
