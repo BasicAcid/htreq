@@ -77,6 +77,7 @@ type config struct {
 	showTiming      bool
 	retryCount      int
 	retryDelay      time.Duration
+	retryUnsafe     bool
 	followRedirects bool
 	maxRedirects    int
 	basicAuth       string
@@ -86,6 +87,9 @@ type config struct {
 	useColor        bool // Computed: whether to actually use colors
 	noAltSvc        bool
 	deadline        time.Time // absolute deadline for the entire request; set in run()
+	requestData     string    // normalized request cached for retries, including stdin input
+	requestMethod   string    // uppercase method extracted from requestData
+	requestLoaded   bool
 }
 
 // timingInfo holds detailed timing information for a request
@@ -224,7 +228,16 @@ func main() {
 	var lastErr error
 	for attempt := 0; attempt <= cfg.retryCount; attempt++ {
 		if attempt > 0 {
+			if !cfg.retryUnsafe && !isRetrySafeMethod(cfg.requestMethod) {
+				if !cfg.quiet {
+					fmt.Fprintf(os.Stderr, "[!] Not retrying unsafe %s request; use --retry-unsafe to opt in\n", cfg.requestMethod)
+				}
+				os.Exit(1)
+			}
 			if !cfg.quiet {
+				if cfg.retryUnsafe && !isRetrySafeMethod(cfg.requestMethod) {
+					fmt.Fprintf(os.Stderr, "[!] Retrying unsafe %s request; it may replay a side effect\n", cfg.requestMethod)
+				}
 				fmt.Fprintf(os.Stderr, "[*] Retrying in %v... (attempt %d/%d)\n", cfg.retryDelay, attempt, cfg.retryCount)
 			}
 			time.Sleep(cfg.retryDelay)
@@ -259,6 +272,15 @@ func main() {
 }
 
 // isRetryableError determines if an error should trigger a retry
+func isRetrySafeMethod(method string) bool {
+	switch strings.ToUpper(method) {
+	case http.MethodGet, http.MethodHead, http.MethodOptions, http.MethodTrace, http.MethodPut, http.MethodDelete:
+		return true
+	default:
+		return false
+	}
+}
+
 func isRetryableError(err error) bool {
 	if err == nil {
 		return false
@@ -333,6 +355,7 @@ func parseArgs() *config {
 	flag.Int64Var(&cfg.maxBytes, "max-bytes", 0, "Limit response output to N bytes")
 	flag.IntVar(&cfg.retryCount, "retry", 0, "Number of retries on failure (0 = no retries)")
 	flag.DurationVar(&cfg.retryDelay, "retry-delay", 1*time.Second, "Delay between retries")
+	flag.BoolVar(&cfg.retryUnsafe, "retry-unsafe", false, "Allow retries of non-idempotent requests")
 	flag.BoolVar(&cfg.followRedirects, "follow", false, "Follow HTTP redirects (3xx)")
 	flag.BoolVar(&cfg.followRedirects, "L", false, "Follow HTTP redirects (alias for --follow)")
 	flag.IntVar(&cfg.maxRedirects, "max-redirects", 10, "Maximum number of redirects to follow")
@@ -524,10 +547,18 @@ func run(cfg *config) error {
 		return dumpTLSInfo(tlsConn, cfg.target)
 	}
 
-	// Read request (needed for HTTP/1.1, HTTP/2, and WebSocket)
-	request, err := readRequest(cfg)
-	if err != nil {
-		return err
+	// Read and normalize the request once. Retrying must resend the same bytes,
+	// including when the original request came from stdin.
+	request := cfg.requestData
+	if !cfg.requestLoaded {
+		var err error
+		request, err = readRequest(cfg)
+		if err != nil {
+			return err
+		}
+		cfg.requestData = request
+		cfg.requestMethod = extractRequestMethod(request)
+		cfg.requestLoaded = true
 	}
 
 	// Process Basic Auth if specified
@@ -1356,6 +1387,15 @@ func readRequest(cfg *config) (string, error) {
 	}
 
 	return request, nil
+}
+
+func extractRequestMethod(request string) string {
+	if line, _, _ := strings.Cut(request, "\r\n"); line != "" {
+		if fields := strings.Fields(line); len(fields) > 0 {
+			return strings.ToUpper(fields[0])
+		}
+	}
+	return "unknown"
 }
 
 func expandEnvVars(data string, cfg *config) string {

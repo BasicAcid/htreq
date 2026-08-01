@@ -16,6 +16,37 @@ import (
 	"golang.org/x/net/http2/hpack"
 )
 
+func TestRetrySafety(t *testing.T) {
+	for _, method := range []string{"GET", "HEAD", "OPTIONS", "TRACE", "PUT", "DELETE", "put"} {
+		if !isRetrySafeMethod(method) {
+			t.Errorf("isRetrySafeMethod(%q) = false, want true", method)
+		}
+	}
+	for _, method := range []string{"POST", "PATCH", "CONNECT", "unknown", ""} {
+		if isRetrySafeMethod(method) {
+			t.Errorf("isRetrySafeMethod(%q) = true, want false", method)
+		}
+	}
+}
+
+func TestExtractRequestMethod(t *testing.T) {
+	tests := []struct {
+		request string
+		want    string
+	}{
+		{"post /items HTTP/1.1\r\nHost: example.com\r\n\r\n", "POST"},
+		{"GET / HTTP/1.1\r\n\r\n", "GET"},
+		{"\r\n", "unknown"},
+		{"", "unknown"},
+	}
+
+	for _, tt := range tests {
+		if got := extractRequestMethod(tt.request); got != tt.want {
+			t.Errorf("extractRequestMethod(%q) = %q, want %q", tt.request, got, tt.want)
+		}
+	}
+}
+
 // Test parseTarget function
 func TestParseTarget(t *testing.T) {
 	tests := []struct {

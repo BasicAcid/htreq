@@ -246,6 +246,7 @@ Options:
 
   --retry N               Number of retries on failure (default: 0)
   --retry-delay DURATION  Delay between retries (default: 1s)
+  --retry-unsafe          Allow retries of non-idempotent requests
   --follow, -L            Follow HTTP redirects
   --max-redirects N       Maximum redirects to follow (default: 10)
   --timeout DURATION      Socket timeout (default: 10s)

@@ -4,17 +4,7 @@ This file tracks user-impacting gaps in the current implementation. Items are or
 
 ## Open issues
 
-### 1. Retries can replay non-idempotent requests
-**Severity:** High
-**Location:** `main`, `isRetryableError`
-
-The retry loop retries any request after a matching transport error. If a server processed a POST/PATCH but the response was lost, retrying can duplicate the side effect.
-
-**Recommended fix:** Retry only idempotent methods by default. Require an explicit unsafe-retry opt-in for other methods and warn before replaying a request body.
-
----
-
-### 2. HTTP/1 response headers have no size limit
+### 1. HTTP/1 response headers have no size limit
 **Severity:** High
 **Location:** `readResponse`, `readResponseWithInfo`
 
@@ -24,7 +14,7 @@ Both readers buffer incoming bytes until `\r\n\r\n` without a maximum header siz
 
 ---
 
-### 3. HTTP/2 lacks full frame fragmentation support
+### 2. HTTP/2 lacks full frame fragmentation support
 **Severity:** Medium
 **Location:** `runHTTP2`, `readHTTP2Response`
 
@@ -34,7 +24,7 @@ The implementation assumes a header block fits in a single HEADERS frame and a r
 
 ---
 
-### 4. Redirect URI resolution is incomplete
+### 3. Redirect URI resolution is incomplete
 **Severity:** Medium
 **Location:** `parseRedirectLocation`
 
@@ -44,7 +34,7 @@ Manual parsing does not correctly resolve relative paths, query-only and fragmen
 
 ---
 
-### 5. Documentation and tests need alignment
+### 4. Documentation and tests need alignment
 **Severity:** Medium
 **Location:** `README.md`, `AGENTS.md`, `Makefile`, `main_test.go`, `test/integration_test.sh`
 
@@ -57,6 +47,7 @@ The README's “no automatic behaviors” claim conflicts with HTTP/3's current 
 - HTTP/2 sends connection and stream `WINDOW_UPDATE` frames for received DATA.
 - HTTP/2 completes header-only responses and acknowledges only non-ACK SETTINGS frames.
 - HTTP/3 follows redirects only with `--follow`, enforces `--max-redirects`, and rejects HTTPS-to-HTTP downgrades.
+- Retries are limited to idempotent methods unless `--retry-unsafe` explicitly opts in.
 - Redirects reconnect when the target/TLS mode changes or the server sends `Connection: close`.
 - HTTP/1.1 redirects strip credential/token headers on an authority change and reject HTTPS-to-HTTP downgrades.
 - WebSocket sessions close the connection to unblock reads instead of retrying timed-out reads.
