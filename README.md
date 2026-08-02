@@ -280,6 +280,7 @@ Request body content here
 - Line endings are automatically normalized (CRLF or LF accepted)
 - Environment variables with `--env`: Use `$VAR` or `${VAR}` syntax
 - Target can be specified in the `Host` header or as a command-line argument
+- Response headers are limited to 1 MiB to protect against unbounded buffering
 
 ## Examples Directory
 

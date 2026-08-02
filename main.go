@@ -34,6 +34,9 @@ const defaultBufferSize = 4096
 // Maximum allowed chunk size (100MB) to prevent DoS/OOM attacks
 const maxChunkSize = 100 * 1024 * 1024
 
+// Maximum response-header size prevents a peer from growing the header buffer indefinitely.
+const maxResponseHeaderSize = 1 * 1024 * 1024
+
 // Minimum length for quoted strings in environment files
 const minQuotedStringLen = 2
 
@@ -1006,11 +1009,15 @@ func readResponseWithInfo(conn net.Conn, cfg *config) (*responseInfo, error) {
 			return nil, err
 		}
 
-		// Check for end of headers
-		if idx := bytes.Index(buffer.Bytes(), []byte("\r\n\r\n")); idx != -1 {
+		// Check for end of headers while bounding the untrusted header buffer.
+		headerEnd, err := responseHeaderEnd(buffer.Bytes())
+		if err != nil {
+			return nil, err
+		}
+		if headerEnd != -1 {
 			headerEnded = true
-			headers := buffer.Bytes()[:idx+4]
-			body := buffer.Bytes()[idx+4:]
+			headers := buffer.Bytes()[:headerEnd]
+			body := buffer.Bytes()[headerEnd:]
 
 			// Parse status code and Location
 			respInfo.headers = string(headers)
@@ -1497,11 +1504,15 @@ func readResponse(conn net.Conn, cfg *config) error {
 			return err
 		}
 
-		// Check for end of headers
-		if idx := bytes.Index(buffer.Bytes(), []byte("\r\n\r\n")); idx != -1 {
+		// Check for end of headers while bounding the untrusted header buffer.
+		headerEnd, err := responseHeaderEnd(buffer.Bytes())
+		if err != nil {
+			return err
+		}
+		if headerEnd != -1 {
 			headerEnded = true
-			headers := buffer.Bytes()[:idx+4]
-			body := buffer.Bytes()[idx+4:]
+			headers := buffer.Bytes()[:headerEnd]
+			body := buffer.Bytes()[headerEnd:]
 
 			// Parse headers
 			contentLength, chunked = parseHeaders(string(headers))
@@ -1557,6 +1568,20 @@ func readResponse(conn net.Conn, cfg *config) error {
 	}
 
 	return readRegularBody(reader, buffer, output, cfg, contentLength, &bytesWritten)
+}
+
+func responseHeaderEnd(response []byte) (int, error) {
+	if idx := bytes.Index(response, []byte("\r\n\r\n")); idx != -1 {
+		headerEnd := idx + len("\r\n\r\n")
+		if headerEnd > maxResponseHeaderSize {
+			return 0, fmt.Errorf("response headers exceed maximum size of %d bytes", maxResponseHeaderSize)
+		}
+		return headerEnd, nil
+	}
+	if len(response) > maxResponseHeaderSize {
+		return 0, fmt.Errorf("response headers exceed maximum size of %d bytes", maxResponseHeaderSize)
+	}
+	return -1, nil
 }
 
 func parseHeaders(headers string) (*int64, bool) {

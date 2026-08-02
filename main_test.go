@@ -361,6 +361,39 @@ func TestParseHeaders(t *testing.T) {
 	}
 }
 
+func TestResponseHeaderSizeLimit(t *testing.T) {
+	oversizedResponse := []byte("HTTP/1.1 200 OK\r\nX-Large: ")
+	oversizedResponse = append(oversizedResponse, bytes.Repeat([]byte("a"), maxResponseHeaderSize)...)
+
+	tests := []struct {
+		name string
+		read func(net.Conn, *config) error
+	}{
+		{
+			name: "regular response reader",
+			read: func(conn net.Conn, cfg *config) error {
+				return readResponse(conn, cfg)
+			},
+		},
+		{
+			name: "redirect response reader",
+			read: func(conn net.Conn, cfg *config) error {
+				_, err := readResponseWithInfo(conn, cfg)
+				return err
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.read(fakeConn{bytes.NewReader(oversizedResponse)}, &config{bodyOnly: true})
+			if err == nil || !strings.Contains(err.Error(), "response headers exceed maximum size") {
+				t.Errorf("reader error = %v, want response-header size error", err)
+			}
+		})
+	}
+}
+
 // Test colorize method
 func TestConfigColorize(t *testing.T) {
 	tests := []struct {
